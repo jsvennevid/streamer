@@ -2,8 +2,12 @@
 #include "../../backend/drivers/driver.h"
 
 #include <stdint.h>
-#include <pthread.h>
 #include <stdio.h>
+
+#if defined(__linux__)
+#define __USE_GNU
+#endif
+#include <pthread.h>
 
 static volatile uint32_t s_shutdown = 0;
 static pthread_mutex_t s_condMutex = PTHREAD_MUTEX_INITIALIZER;
