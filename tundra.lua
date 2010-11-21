@@ -6,7 +6,9 @@ local common = {
 			{ "STREAMER_FINAL"; Config = "*-*-final-*" },
 
 			{ "STREAMER_PS2_SCE"; Config = "*-*-*-sce" },
-		}
+		},
+
+		CCOPTS_FINAL = "$(CCOPTS_RELEASE)"
 	}
 }
 
