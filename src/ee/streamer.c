@@ -21,10 +21,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 */
-#include "../../backend/iop/rpc.h"
+#include "../backend/iop/rpc.h"
 
-#include "../../backend/drivers/driver.h"
-#include "../../backend/backend.h"
+#include "../backend/drivers/driver.h"
+#include "../backend/backend.h"
 
 #if defined(STREAMER_PS2_SCE)
 #include <eekernel.h>

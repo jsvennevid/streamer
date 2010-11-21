@@ -21,8 +21,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 */
-#include "../../backend/backend.h"
-#include "../../backend/drivers/driver.h"
+#include "../backend/backend.h"
+#include "../backend/drivers/driver.h"
 
 #include <stdint.h>
 #include <stdio.h>

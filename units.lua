@@ -1,4 +1,4 @@
--- Based on FGlob, this globber supports filtering into multiple configurations
+-- Based on FGlob, this globber supports filtering into multiple configurations, and does so in the order specified
 local function MGlob(args)
         -- Use the regular glob to fetch the file list.
         local files = Glob(args)
@@ -28,10 +28,10 @@ local function MGlob(args)
         -- }
         for _, f in ipairs(files) do
                 local filtered = false
-                for filter, list in pairs(pats) do
-                        if f:match(filter) then
+                for _, fitem in ipairs(args.Filters) do
+                        if f:match(fitem.Pattern) then
                                 filtered = true
-				for _, litem in ipairs(list) do
+				for _, litem in ipairs(pats[fitem.Pattern]) do
 					litem[#litem + 1] = f
 				end
 				break
@@ -47,51 +47,30 @@ end
 
 StaticLibrary
 {
-	Name = "streamer.frontend",
-	SubConfig = "ee",
+	Name = "streamer",
+	SubConfig = { "ee"; Config = "ps2-*-*-*" },
 
 	Sources = {
 		{
 			MGlob {
-				Dir = "src/frontend",
+				Dir = "src",
 				Extensions = { ".c" },
 				Filters = {
-					{ Pattern = "/win32/", Extensions = { ".c" }, Configs = { "win32-*-*-*" } },
-					{ Pattern = "/ee/", Extensions = { ".c" }, Configs = { "ps2-*-*-*" } },
-					{ Pattern = "/unix/", Extensions = { ".c" }, Configs = { "macosx-*-*-*", "linux-*-*-*" } }
+					{ Pattern = "/win32/", Configs = { "win32-*-*-*" } },
+					{ Pattern = "/ee/", Configs = { "ps2-*-*-*" } },
+					{ Pattern = "/unix/", Configs = { "macosx-*-*-*", "linux-*-*-*" } },
+					{ Pattern = "/iop/", Configs = {"ps2-*-*-iop*" } },
+					{ Pattern = "/backend/", Configs = { "win32-*-*-*", "macosx-*-*-*", "linux-*-*-*" } }
 				}
 			}
 		}
 	},
-
-	Depend = {
-		{ "streamer.backend"; Config = "win32-*-*-*" },
-		{ "streamer.backend"; Config = "win64-*-*-*" },
-		{ "streamer.backend"; Config = "linux-*-*-*" },
-		{ "streamer.backend"; Config = "macosx-*-*-*" },
-		{ "streamer"; Config = "ps2-*-*-*" }
-	}
-}
-
-StaticLibrary
-{
-	Name = "streamer.backend",
-
-	Sources = {
-		FGlob {
-			Dir = "src/backend",
-			Extensions = { ".c" },
-			Filters = {
-				{ Pattern = "/iop/"; Config = "ps2-*-*-*" }
-			}
-		}
-	}
 }
 
 -- PS2 IOP streaming IRX
 SharedLibrary
 {
-	Name = "streamer",
+	Name = "iopstream",
 	SubConfig = "iop",
 	Config = "ps2-*-*-*",
 
@@ -106,5 +85,5 @@ SharedLibrary
 	}
 }
 
-Default "streamer.frontend"
 Default "streamer"
+Default "iopstream"
