@@ -21,8 +21,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 */
-#include "../../backend/backend.h"
-#include "../../backend/drivers/driver.h"
+#include "../backend/backend.h"
+#include "../backend/drivers/driver.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -179,23 +179,4 @@ int streamerLSeek(int fd, int offset, StreamerSeekMode whence)
 void internalStreamerSetEventFlag()
 {
 	SetEvent(s_event);
-}
-
-void internalStreamerIssueResponse(int fd, int result, StreamerCallMethod method)
-{
-}
-
-void internalStreamerIssueCompletion(int fd, int operation, int result, StreamerCallMethod method)
-{
-	switch (method)
-	{
-		case StreamerCallMethod_Normal:
-		break;
-
-		case StreamerCallMethod_Serializer:
-		{
-			internalStreamerSerializerEvent(fd, result);
-		}
-		break;
-	}
 }
