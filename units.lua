@@ -85,5 +85,20 @@ SharedLibrary
 	}
 }
 
+Program
+{
+	Name = "simple",
+
+	Sources = {
+		Glob { Dir = "samples/simple", Extensions = { ".c" } }
+	},
+
+	Env = {
+		CPPPATH = "src"
+	},
+
+	Depends = { "streamer" }
+}
+
 Default "streamer"
 Default "iopstream"

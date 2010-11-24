@@ -40,6 +40,7 @@ void streamer_dprintf(const char* fmt, ...)
 	va_end(ap);
 
 	OutputDebugString(buffer);
+	fprintf(stderr, buffer);
 }
 
 static volatile BOOL s_shutdown = FALSE;
@@ -180,3 +181,8 @@ void internalStreamerSetEventFlag()
 {
 	SetEvent(s_event);
 }
+
+void internalStreamerIssueCompletion(int fd, int operation, int result, StreamerCallMethod method)
+{
+}
+

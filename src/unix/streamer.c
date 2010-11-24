@@ -37,8 +37,6 @@ static pthread_mutex_t s_condMutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_cond = PTHREAD_COND_INITIALIZER;
 static pthread_t s_thread = 0;
 
-static void internalStreamerSignal();
-
 static void* streamerThread(void* arg)
 {
 	while (!s_shutdown)
@@ -94,7 +92,7 @@ int streamerShutdown()
 	if (s_thread)
 	{
 		s_shutdown = 1;
-		internalStreamerSignal();
+		internalStreamerSetEventFlag();
 
 		pthread_join(s_thread, 0);
 
@@ -120,7 +118,7 @@ int streamerOpen(const char* filename, StreamerOpenMode mode)
 	int result = internalStreamerOpen(filename, mode, StreamerCallMethod_Normal);
 	if (result >= 0)
 	{
-		internalStreamerSignal();
+		internalStreamerSetEventFlag();
 	}
 	return result;
 }
@@ -130,7 +128,7 @@ int streamerClose(int fd)
 	int result = internalStreamerClose(fd, StreamerCallMethod_Normal);
 	if (result >= 0)
 	{
-		internalStreamerSignal();
+		internalStreamerSetEventFlag();
 	}
 	return result;
 }
@@ -140,7 +138,7 @@ int streamerRead(int fd, void* buffer, unsigned int length)
 	int result = internalStreamerRead(fd, buffer, length, 0, 0, StreamerCallMethod_Normal);
 	if (result >= 0)
 	{
-		internalStreamerSignal();
+		internalStreamerSetEventFlag();
 	}
 	return result;
 }
@@ -150,13 +148,16 @@ int streamerLSeek(int fd, int offset, StreamerSeekMode whence)
 	int result = internalStreamerLSeek(fd, offset, whence, StreamerCallMethod_Normal);
 	if (result >= 0)
 	{
-		internalStreamerSignal();
+		internalStreamerSetEventFlag();
 	}
 	return result;
 }
 
-static void internalStreamerSignal()
+void internalStreamerSetEventFlag()
 {
 	pthread_cond_signal(&s_cond);
 }
 
+void internalStreamerIssueCompletion(int fd, int operation, int result, StreamerCallMethod method)
+{
+}

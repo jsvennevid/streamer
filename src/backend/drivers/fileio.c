@@ -188,6 +188,7 @@ int FileIo_Read(struct IODriver* driver, int fd, void* buffer, unsigned int leng
 
 	if (!ReadFile(s_handles[fd],buffer,(DWORD)length,&bytesRead,0))
 	{
+		STREAMER_PRINTF(("FileIo: Read request failed (0x%08lx, %d)\n", GetLastError(), GetLastError()));
 		return -1;
 	}
 	return bytesRead;
