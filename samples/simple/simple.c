@@ -9,7 +9,9 @@
 #include <unistd.h>
 #endif
 
+#include <stdlib.h>
 #include <time.h>
+#include <string.h>
 
 int waitForStreamerRequest(int fd)
 {
@@ -89,11 +91,13 @@ int streamerTest()
 			}
 
 			totalRead += ret;
+
+			//fprintf(stderr, "Read %d bytes, %d total\n", ret, totalRead);
 		}
 		while (ret > 0);
 		b = time(0);
 
-		fprintf(stderr, "Read %d bytes in %d seconds\n", totalRead, b-a);
+		fprintf(stderr, "Read %d bytes in %d seconds\n", totalRead, (int)(b-a));
 
 		ret = streamerClose(fd);
 		if (ret < 0)
@@ -141,7 +145,7 @@ int main()
 	}
 
 	memset(buf, 0, sizeof(buf));
-	for (i = 0; i < 1024*1024; ++i)
+	for (i = 0; i < 1024 * 100; ++i)
 	{
 		fwrite(buf, 1, sizeof(buf), fp);
 	}
@@ -160,5 +164,7 @@ int main()
 #elif defined(STREAMER_UNIX)
 	unlink("test.file");
 #endif
+
+	return 0;
 }
 

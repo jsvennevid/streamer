@@ -39,6 +39,7 @@ static pthread_t s_thread = 0;
 
 static void* streamerThread(void* arg)
 {
+	pthread_mutex_lock(&s_condMutex);
 	while (!s_shutdown)
 	{
 		switch (internalStreamerIdle())
@@ -55,13 +56,12 @@ static void* streamerThread(void* arg)
 
 			default:
 			{
-				pthread_mutex_lock(&s_condMutex);
 				pthread_cond_wait(&s_cond, &s_condMutex);
-				pthread_mutex_unlock(&s_condMutex);
 			}
 			break;
 		}
 	}
+	pthread_mutex_unlock(&s_condMutex);
 
 	s_shutdown = 1;
 	pthread_exit(0);
@@ -155,7 +155,9 @@ int streamerLSeek(int fd, int offset, StreamerSeekMode whence)
 
 void internalStreamerSetEventFlag()
 {
+	pthread_mutex_lock(&s_condMutex);
 	pthread_cond_signal(&s_cond);
+	pthread_mutex_unlock(&s_condMutex);
 }
 
 void internalStreamerIssueCompletion(int fd, int operation, int result, StreamerCallMethod method)

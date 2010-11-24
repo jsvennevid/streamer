@@ -65,6 +65,13 @@ StaticLibrary
 			}
 		}
 	},
+
+	Propagate = {
+		Libs = {
+			{ "pthread"; Config = "linux-*-*-*" },
+			{ "pthread"; Config = "macosx-*-*-*" },
+		}
+	}
 }
 
 -- PS2 IOP streaming IRX
