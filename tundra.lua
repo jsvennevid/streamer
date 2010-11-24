@@ -3,12 +3,10 @@ local common = {
 		CPPDEFS = {
 			{ "STREAMER_DEBUG"; Config = "*-*-debug-*" },
 			{ "STREAMER_RELEASE"; Config = "*-*-release-*" },
-			{ "STREAMER_FINAL"; Config = "*-*-final-*" },
+			{ "STREAMER_FINAL"; Config = "*-*-production-*" },
 
 			{ "STREAMER_PS2_SCE"; Config = "*-*-*-sce" },
 		},
-
-		CCOPTS_FINAL = "$(CCOPTS_RELEASE)"
 	}
 }
 
@@ -27,8 +25,6 @@ Build {
 		Config { Name = "ps2-iopgcc", Virtual = true, Inherit = common, Tools = { "gcc", { "tundra.tools.ps2sdk"; TargetArch = "iop" } }, Env = { CPPDEFS = { "STREAMER_PS2", "_IOP" } } },
 		Config { Name = "ps2-eegcc", Virtual = true, Inherit = common, Tools = { "gcc", { "tundra.tools.ps2sdk"; TargetArch = "ee" } }, Env = { CPPDEFS = { "STREAMER_PS2" } } }
 	},
-
-	Variants = { "debug", "release", "final" },
 
 	SubVariants = { "default", "sce" }
 }

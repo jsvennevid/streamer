@@ -46,11 +46,15 @@ typedef struct IODriver
 #pragma warning(disable: 4100 4127)
 #endif
 
-#if defined(_WIN32)
+#if !defined(STREAMER_FINAL)
+#if defined(STREAMER_WIN32)
 extern void streamer_dprintf(const char* fmt, ...);
 #define STREAMER_PRINTF(x) do { streamer_dprintf x; } while (0)
 #else
 #define STREAMER_PRINTF(x) do { printf x; } while (0)
+#endif
+#else
+#define STREAMER_PRINTF(x)
 #endif
 
 #endif
