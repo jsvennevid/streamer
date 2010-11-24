@@ -1,0 +1,3 @@
+[submodule "vendor/zlib"]
+	path = vendor/zlib
+	url = git://github.com/jsvennevid/zlib.git
