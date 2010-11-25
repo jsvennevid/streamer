@@ -44,7 +44,7 @@ local function MGlob(args)
         return result
 end
 
-
+local dependencies = { "contrib.fastlz" }
 StaticLibrary
 {
 	Name = "streamer",
@@ -80,7 +80,10 @@ StaticLibrary
 	},
 
 	Depends = {
-		"contrib.fastlz"
+		{ dependencies; Config = "linux-*-*-*" },
+		{ dependencies; Config = "macosx-*-*-*" },
+		{ dependencies; Config = "win32-*-*-*" },
+		{ dependencies; Config = "win64-*-*-*" }
 	}
 }
 
@@ -109,6 +112,10 @@ SharedLibrary
 		CPPPATH = {
 			"contrib"
 		}
+	},
+
+	Depends = {
+		"contrib.fastlz"
 	}
 }
 
@@ -119,6 +126,8 @@ SharedLibrary
 StaticLibrary
 {
 	Name = "contrib.fastlz",
+	SubConfig = "iop",
+
 	Sources = {
 		Glob { Dir = "contrib/fastlz", Extensions = { ".c" } }
 	},
