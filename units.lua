@@ -71,6 +71,10 @@ StaticLibrary
 			{ "pthread"; Config = "linux-*-*-*" },
 			{ "pthread"; Config = "macosx-*-*-*" },
 		}
+	},
+
+	Depends = {
+		"zlib"
 	}
 }
 
@@ -89,6 +93,24 @@ SharedLibrary
 				{ Pattern = "/iop/"; Config = "ps2-*-*-*" }
 			}
 		}
+	}
+}
+
+StaticLibrary
+{
+	Name = "zlib",
+
+	Sources = {
+		FGlob {
+			Dir = "vendor/zlib", Extensions = { ".c" },
+			Filters = {
+				{ Pattern = "/contrib/", Config = "*-*-*-filtered" }
+			}
+		}
+	},
+
+	Env = {
+		CPPPATH = "vendor/zlib"
 	}
 }
 
