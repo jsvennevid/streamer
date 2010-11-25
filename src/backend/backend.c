@@ -623,6 +623,7 @@ int internalStreamerInitialize(StreamerTransport transport, StreamerContainer co
 int ps2StreamerShutdown()
 {
 	DeleteSema(s_queueSemaphore);
+	return StreamerResult_Ok;
 }
 #endif
 
