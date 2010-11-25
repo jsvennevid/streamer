@@ -98,6 +98,16 @@ SharedLibrary
 			Filters = {
 				{ Pattern = "/iop/"; Config = "ps2-*-*-*" }
 			}
+		},
+
+		Glob {
+			Dir = "contrib/fastlz", Extensions = { ".c" }
+		}
+	},
+
+	Env = {
+		CPPPATH = {
+			"contrib"
 		}
 	}
 }

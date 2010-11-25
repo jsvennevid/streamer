@@ -297,6 +297,7 @@ int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int
 	FileArchiveDriver* local = (FileArchiveDriver*)driver;
 	FileArchiveHandle* handle;
 	FileArchiveEntry* file;
+	int compression;
 
 	if ((fd < 0) || (fd >= FILEARCHIVE_MAX_HANDLES))
 	{
@@ -312,7 +313,8 @@ int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int
 		return -1;
 	}
 
-	if (handle->m_file->m_compression == FILEARCHIVE_COMPRESSION_UNCOMPRESSED)
+	compression = handle->m_file->m_compression;
+	if (compression == FILEARCHIVE_COMPRESSION_UNCOMPRESSED)
 	{
 		int maxRead = (file->m_originalSize - handle->m_offset) < length ? (file->m_originalSize - handle->m_offset) : length;
 		int result;
@@ -389,8 +391,27 @@ int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int
 				}
 				else
 				{
-					STREAMER_PRINTF(("FileArchive: Decompression support unimplemented\n"));
-					return -1;
+					switch (compression)
+					{
+#if defined(STREAMER_FILEARCHIVE_SUPPORT_FASTLZ)
+						case FILEARCHIVE_COMPRESSION_FASTLZ:
+						{
+							int result = fastlz_decompress(local->m_cache + local->m_cacheOffset + sizeof(unsigned short) * 2, compressedSize, handle->m_buffer, FILEARCHIVE_BUFFER_SIZE);
+							if (result != originalSize)
+							{
+								STREAMER_PRINTF(("FileArchive: Failed to decompress fastlz block\n"));
+								return -1;
+							}
+						}
+						break;
+#endif
+						default:
+						{
+							STREAMER_PRINTF(("FileArchive: Unsupported compression scheme\n"));
+							return -1;
+						}
+						break;
+					}
 				}
 
 				cacheUsage = compressedSize + sizeof(unsigned short)*2;
