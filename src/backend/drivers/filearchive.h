@@ -107,4 +107,7 @@ typedef struct FileArchiveDriver
 
 IODriver* FileArchive_Create(IODriver* native, const char* file);
 
+#define STREAMER_FILEARCHIVE_SUPPORT_FASTLZ
+
 #endif
+

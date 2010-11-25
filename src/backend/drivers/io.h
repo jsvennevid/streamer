@@ -54,7 +54,6 @@ typedef enum
 typedef enum
 {
 	StreamerContainer_Direct,
-	StreamerContainer_Zip,
 	StreamerContainer_FileArchive
 } StreamerContainer;
 

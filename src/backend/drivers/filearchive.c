@@ -24,7 +24,10 @@ SOFTWARE.
 #define _CRT_SECURE_NO_WARNINGS
 
 #include "filearchive.h"
-#include "lzo.h"
+#if defined(STREAMER_FILEARCHIVE_SUPPORT_FASTLZ)
+#include <fastlz/fastlz.h>
+#endif
+
 
 #if defined(_IOP)
 #include "../iop/irx_imports.h"
@@ -46,7 +49,7 @@ SOFTWARE.
 #define FILEARCHIVE_TAIL_SIGNATURE (('Z' << 24) | ('T' << 16) | ('A' << 8) | ('I'))
 
 #define FILEARCHIVE_COMPRESSION_UNCOMPRESSED (0)
-#define FILEARCHIVE_COMPRESSION_LZO (('L' << 24) | ('Z' << 16) | ('O' << 8) | ('0'))
+#define FILEARCHIVE_COMPRESSION_FASTLZ (('F' << 24) | ('L' << 16) | ('Z' << 8) | ('0'))
 
 #define FILEARCHIVE_COMPRESSION_SIZE_IGNORE 0x8000
 #define FILEARCHIVE_COMPRESSION_SIZE_MASK 0x7fff
@@ -309,126 +312,115 @@ int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int
 		return -1;
 	}
 
-	switch (handle->m_file->m_compression)
+	if (handle->m_file->m_compression == FILEARCHIVE_COMPRESSION_UNCOMPRESSED)
 	{
-		case FILEARCHIVE_COMPRESSION_UNCOMPRESSED:
+		int maxRead = (file->m_originalSize - handle->m_offset) < length ? (file->m_originalSize - handle->m_offset) : length;
+		int result;
+
+		result = local->m_native.m_driver->lseek(local->m_native.m_driver, local->m_native.m_fd, local->m_base + file->m_offset + handle->m_offset, StreamerSeekMode_Set);
+		if (result < 0)
 		{
-			int maxRead = (file->m_originalSize - handle->m_offset) < length ? (file->m_originalSize - handle->m_offset) : length;
-			int result;
-
-			result = local->m_native.m_driver->lseek(local->m_native.m_driver, local->m_native.m_fd, local->m_base + file->m_offset + handle->m_offset, StreamerSeekMode_Set);
-			if (result < 0)
-			{
-				STREAMER_PRINTF(("FileArchive: Failed seeking to uncompressed location (%d)\n", result));
-				return result;
-			}
-
-			result = local->m_native.m_driver->read(local->m_native.m_driver, local->m_native.m_fd, buffer, maxRead);
-			if (result != maxRead)
-			{
-				STREAMER_PRINTF(("FileArchive: Failed reading %d uncompressed bytes from archive (%d)\n", maxRead, result));
-				return -1;
-			}
-
-			handle->m_offset += result;
+			STREAMER_PRINTF(("FileArchive: Failed seeking to uncompressed location (%d)\n", result));
 			return result;
 		}
-		break;
 
-		case FILEARCHIVE_COMPRESSION_LZO:
+		result = local->m_native.m_driver->read(local->m_native.m_driver, local->m_native.m_fd, buffer, maxRead);
+		if (result != maxRead)
 		{
-			int actual = 0;
-
-			if (local->m_cacheOwner != fd)
-			{
-				local->m_cacheOffset = 0;
-				local->m_cacheFill = 0;
-				local->m_cacheOwner = fd;
-			}
-
-			length = length < (unsigned int)(file->m_originalSize - handle->m_offset) ? length : (file->m_originalSize - handle->m_offset);
-			while (length > 0)
-			{
-				int maxRead, bufferRead;
-
-				if (handle->m_bufferFill == handle->m_bufferOffset)
-				{
-					unsigned short originalSize, compressedSize, cacheUsage;
-
-					if (FileArchive_FillCache(local, handle, file, sizeof(unsigned short)*2) < 0)
-					{
-						STREAMER_PRINTF(("FileArchive: Error while filling compression cache\n"));
-						return -1;
-					}
-
-					memcpy(&originalSize, local->m_cache + local->m_cacheOffset, sizeof(originalSize));
-					memcpy(&compressedSize, local->m_cache + local->m_cacheOffset + 2, sizeof(compressedSize));
-
-					if (originalSize > FILEARCHIVE_BUFFER_SIZE)
-					{
-						STREAMER_PRINTF(("FileArchive: Decompressed block too large (max: %d, was: %d)\n", FILEARCHIVE_BUFFER_SIZE, originalSize));
-						return -1;
-					}
-
-					if (FileArchive_FillCache(local, handle, file, sizeof(unsigned short)*2 + (compressedSize & FILEARCHIVE_COMPRESSION_SIZE_MASK)) < 0)
-					{
-						STREAMER_PRINTF(("FileArchive: Error while filling compression cache\n"));
-						return -1;
-					}
-
-					if (compressedSize & FILEARCHIVE_COMPRESSION_SIZE_IGNORE)
-					{
-						compressedSize &= FILEARCHIVE_COMPRESSION_SIZE_MASK;
-
-						if (compressedSize != originalSize)
-						{
-							STREAMER_PRINTF(("FileArchive: Uncompressed block size mismatch\n"));
-							return -1;
-						}
-
-						memcpy(handle->m_buffer, local->m_cache + local->m_cacheOffset + sizeof(unsigned short)*2, compressedSize);
-					}
-					else
-					{
-						if (streamer_lzo_decompress(handle->m_buffer, originalSize, local->m_cache + local->m_cacheOffset + sizeof(unsigned short)*2, compressedSize) < 0)
-						{
-							STREAMER_PRINTF(("FileArchive: Error while decompressing LZO block\n"));
-							return -1;
-						}
-					}
-
-					cacheUsage = compressedSize + sizeof(unsigned short)*2;
-					handle->m_compressedOffset += cacheUsage;
-					local->m_cacheOffset += cacheUsage;
-
-					handle->m_bufferOffset = 0;
-					handle->m_bufferFill = originalSize;
-				}
-
-				bufferRead = handle->m_bufferFill - handle->m_bufferOffset;
-				maxRead = (unsigned int)bufferRead > length ? length : bufferRead;
-
-				if (!maxRead)
-				{
-					break;
-				}
-
-				memcpy(buffer, handle->m_buffer + handle->m_bufferOffset, maxRead);
-
-				buffer = ((char*)buffer) + maxRead;
-				length -= maxRead;
-				actual += maxRead;
-
-				handle->m_bufferOffset += maxRead;
-				handle->m_offset += maxRead;
-			}
-
-			return actual;
+			STREAMER_PRINTF(("FileArchive: Failed reading %d uncompressed bytes from archive (%d)\n", maxRead, result));
+			return -1;
 		}
-		break;
-	}
 
-	return -1;
+		handle->m_offset += result;
+		return result;
+	}
+	else
+	{
+		int actual = 0;
+
+		if (local->m_cacheOwner != fd)
+		{
+			local->m_cacheOffset = 0;
+			local->m_cacheFill = 0;
+			local->m_cacheOwner = fd;
+		}
+
+		length = length < (unsigned int)(file->m_originalSize - handle->m_offset) ? length : (file->m_originalSize - handle->m_offset);
+		while (length > 0)
+		{
+			int maxRead, bufferRead;
+
+			if (handle->m_bufferFill == handle->m_bufferOffset)
+			{
+				unsigned short originalSize, compressedSize, cacheUsage;
+
+				if (FileArchive_FillCache(local, handle, file, sizeof(unsigned short)*2) < 0)
+				{
+					STREAMER_PRINTF(("FileArchive: Error while filling compression cache\n"));
+					return -1;
+				}
+
+				memcpy(&originalSize, local->m_cache + local->m_cacheOffset, sizeof(originalSize));
+				memcpy(&compressedSize, local->m_cache + local->m_cacheOffset + 2, sizeof(compressedSize));
+
+				if (originalSize > FILEARCHIVE_BUFFER_SIZE)
+				{
+					STREAMER_PRINTF(("FileArchive: Decompressed block too large (max: %d, was: %d)\n", FILEARCHIVE_BUFFER_SIZE, originalSize));
+					return -1;
+				}
+
+				if (FileArchive_FillCache(local, handle, file, sizeof(unsigned short)*2 + (compressedSize & FILEARCHIVE_COMPRESSION_SIZE_MASK)) < 0)
+				{
+					STREAMER_PRINTF(("FileArchive: Error while filling compression cache\n"));
+					return -1;
+				}
+
+				if (compressedSize & FILEARCHIVE_COMPRESSION_SIZE_IGNORE)
+				{
+					compressedSize &= FILEARCHIVE_COMPRESSION_SIZE_MASK;
+
+					if (compressedSize != originalSize)
+					{
+						STREAMER_PRINTF(("FileArchive: Uncompressed block size mismatch\n"));
+						return -1;
+					}
+
+					memcpy(handle->m_buffer, local->m_cache + local->m_cacheOffset + sizeof(unsigned short)*2, compressedSize);
+				}
+				else
+				{
+					STREAMER_PRINTF(("FileArchive: Decompression support unimplemented\n"));
+					return -1;
+				}
+
+				cacheUsage = compressedSize + sizeof(unsigned short)*2;
+				handle->m_compressedOffset += cacheUsage;
+				local->m_cacheOffset += cacheUsage;
+
+				handle->m_bufferOffset = 0;
+				handle->m_bufferFill = originalSize;
+			}
+
+			bufferRead = handle->m_bufferFill - handle->m_bufferOffset;
+			maxRead = (unsigned int)bufferRead > length ? length : bufferRead;
+
+			if (!maxRead)
+			{
+				break;
+			}
+
+			memcpy(buffer, handle->m_buffer + handle->m_bufferOffset, maxRead);
+
+			buffer = ((char*)buffer) + maxRead;
+			length -= maxRead;
+			actual += maxRead;
+
+			handle->m_bufferOffset += maxRead;
+			handle->m_offset += maxRead;
+		}
+
+		return actual;
+	}
 }
 
 int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, StreamerSeekMode whence)
@@ -454,61 +446,62 @@ int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, StreamerSeekM
 		return -1;
 	}
 
-	switch (file->m_compression)
+	if (file->m_compression == FILEARCHIVE_COMPRESSION_UNCOMPRESSED)
 	{
-		case FILEARCHIVE_COMPRESSION_UNCOMPRESSED:
+		switch (whence)
 		{
-			switch (whence)
-			{
-				case StreamerSeekMode_Set: newOffset = offset; break;
-				case StreamerSeekMode_Current: newOffset = handle->m_offset + offset; break;
-				case StreamerSeekMode_End: newOffset = file->m_originalSize + offset; break;
-			}
+			case StreamerSeekMode_Set: newOffset = offset; break;
+			case StreamerSeekMode_Current: newOffset = handle->m_offset + offset; break;
+			case StreamerSeekMode_End: newOffset = file->m_originalSize + offset; break;
+		}
 
-			if ((newOffset < 0) || (newOffset > (int)file->m_originalSize))
+		if ((newOffset < 0) || (newOffset > (int)file->m_originalSize))
+		{
+			STREAMER_PRINTF(("FileArchive: Seeking out of bounds\n"));
+			return -1;
+		}
+
+		handle->m_offset = newOffset;
+	}
+	else
+	{
+		if (offset != 0)
+		{
+			STREAMER_PRINTF(("FileArchive: Can only seek to beginning or end of compressed files\n"));
+			return -1;
+		}
+
+		if (fd == local->m_cacheOwner)
+		{
+			local->m_cacheOwner = -1;
+		}
+
+		switch (whence)
+		{
+			case StreamerSeekMode_Set:
 			{
-				STREAMER_PRINTF(("FileArchive: Seeking out of bounds\n"));
+				handle->m_offset = 0;
+				handle->m_compressedOffset = 0;
+			}
+			break;
+
+			case StreamerSeekMode_Current:
+			{
+				STREAMER_PRINTF(("FileArchive: Cannot seek within compressed files\n"));
 				return -1;
 			}
+			break;
 
-			handle->m_offset = newOffset;
+			case StreamerSeekMode_End:
+			{
+				handle->m_offset = file->m_originalSize;
+				handle->m_compressedOffset = file->m_compressedSize;
+			}
+			break;
 		}
-		break;
 
-		case FILEARCHIVE_COMPRESSION_LZO:
-		{
-			if ((offset != 0) || (whence == StreamerSeekMode_Current))
-			{
-				STREAMER_PRINTF(("FileArchive: Can only seek to beginning or end of compressed files\n"));
-				return -1;
-			}
-
-			if (fd == local->m_cacheOwner)
-			{
-				local->m_cacheOwner = -1;
-			}
-
-			switch (whence)
-			{
-				case StreamerSeekMode_Set:
-				{
-					handle->m_offset = 0;
-					handle->m_compressedOffset = 0;
-				}
-				break;
-
-				case StreamerSeekMode_End:
-				{
-					handle->m_offset = file->m_originalSize;
-					handle->m_compressedOffset = file->m_compressedSize;
-				}
-				break;
-			}
-
-			handle->m_bufferOffset = 0;
-			handle->m_bufferFill = 0;
-		}
-		break;
+		handle->m_bufferOffset = 0;
+		handle->m_bufferFill = 0;
 	}
 
 	return handle->m_offset;

@@ -73,8 +73,14 @@ StaticLibrary
 		}
 	},
 
+	Env = {
+		CPPPATH = {
+			"contrib"
+		},
+	},
+
 	Depends = {
-		"zlib"
+		"contrib.fastlz"
 	}
 }
 
@@ -96,23 +102,28 @@ SharedLibrary
 	}
 }
 
+-------------
+-- Contrib --
+-------------
+
 StaticLibrary
 {
-	Name = "zlib",
-
+	Name = "contrib.fastlz",
 	Sources = {
-		FGlob {
-			Dir = "vendor/zlib", Extensions = { ".c" },
-			Filters = {
-				{ Pattern = "/contrib/", Config = "*-*-*-filtered" }
-			}
-		}
+		Glob { Dir = "contrib/fastlz", Extensions = { ".c" } }
 	},
 
 	Env = {
-		CPPPATH = "vendor/zlib"
-	}
+		CCOPTS = {
+			{ "/wd4244"; Config = "win32-*-*-*" },
+			{ "/wd4244"; Config = "win64-*-*-*" }
+		}
+	},
 }
+
+-------------
+-- Samples --
+-------------
 
 Program
 {

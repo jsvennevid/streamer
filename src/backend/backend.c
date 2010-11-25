@@ -26,7 +26,6 @@ SOFTWARE.
 #include "drivers/driver.h"
 #include "drivers/filearchive.h"
 #include "drivers/fileio.h"
-#include "drivers/zip.h"
 #include "drivers/cdvd.h"
 
 #if defined(STREAMER_WIN32)
@@ -578,12 +577,6 @@ int internalStreamerInitialize(StreamerTransport transport, StreamerContainer co
 		case StreamerContainer_Direct:
 		{
 			logic = native;
-		}
-		break;
-
-		case StreamerContainer_Zip:
-		{
-			logic = Zip_Create(native, file);
 		}
 		break;
 
