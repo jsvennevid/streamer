@@ -3,26 +3,24 @@
 #include <stdio.h>
 #include <string.h>
 
-void showHelp(int argc, char* argv[])
+void showHelp(char* command)
 {
 	fprintf(stderr, "\n");
 
-	if ((argc < 2) || (strcmp("help", argv[1])))
+	if (command == NULL)
 	{
 		fprintf(stderr, "filearchive <command> ...\n");
 		fprintf(stderr, "command = create, help\n\n");
 		return;
 	}
-
-	if (argc < 3)
+	else if (!strcmp("help", command))
 	{
 		fprintf(stderr, "Help is available for the following commands:\n\n");
 		fprintf(stderr, "\tcreate\n");
 		fprintf(stderr, "\n");
 		return;
 	}
-
-	if (!strcmp("create", argv[2]))
+	else if (!strcmp("create", command))
 	{
 		fprintf(stderr, "filearchive create [<options>] <archive> [@<spec>] [<path> ...]\n\n");
 		fprintf(stderr, "Create a new file archive.\n\n");
@@ -41,17 +39,32 @@ void showHelp(int argc, char* argv[])
 	fprintf(stderr, "Unknown help topic.\n\n");
 }
 
+int commandCreate(int argc, char* argv[]);
+
 int main(int argc, char* argv[])
 {
 	if (argc < 2)
 	{
-		showHelp(argc, argv);
+		showHelp(NULL);
 		return 0;
 	}
-
-	if (!strcmp("help", argv[1]))
+	else if (!strcmp("help", argv[1]))
 	{
-		showHelp(argc, argv);
+		showHelp(argc >= 3 ? argv[2] : argv[1]);
 		return 0;
+	}
+	else if (!strcmp("create", argv[1]))
+	{
+		if (commandCreate(argc, argv) < 0)
+		{
+			showHelp("create");
+			return 1;
+		}
+	}
+	else
+	{
+		fprintf(stderr, "Unknown filearchive command.\n");
+		showHelp(NULL);
+		return 1;
 	}
 }
