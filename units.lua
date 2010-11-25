@@ -123,6 +123,19 @@ SharedLibrary
 -- Contrib --
 -------------
 
+Program
+{
+	Name = "filearchive",
+
+	Sources = {
+		Glob { Dir = "contrib/filearchive", Extensions = { ".c" } }
+	},
+
+	Depends = {
+		"contrib.fastlz"
+	}
+}
+
 StaticLibrary
 {
 	Name = "contrib.fastlz",
