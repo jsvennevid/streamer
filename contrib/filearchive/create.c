@@ -241,7 +241,7 @@ static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, ui
 				uint32_t bytesMax = bytes - current > 1024 ? 1024 : bytes-current;
 				if (fwrite(input, 1, bytesMax, outp) != bytesMax)
 				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive.\n");
+					fprintf(stderr, "create: Failed writing %u bytes to archive.\n", (unsigned int)bytesMax);
 					break;
 				}
 
@@ -265,7 +265,7 @@ static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, ui
 			{
 				if (fwrite(input, 1, blockRead, outp) != blockRead)
 				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive\n", blockRead);
+					fprintf(stderr, "create: Failed writing %u bytes to archive\n", (unsigned int)blockRead);
 					fclose(inp);
 					inp = NULL;
 				}
@@ -280,7 +280,7 @@ static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, ui
 				block.compressed = FILEARCHIVE_COMPRESSION_SIZE_IGNORE;
 				if (fwrite(&block, 1, sizeof(block), outp) != sizeof(block))
 				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive\n", sizeof(block));
+					fprintf(stderr, "create: Failed writing %u bytes to archive\n", (unsigned int)sizeof(block));
 					fclose(inp);
 					inp = NULL;
 					break;
@@ -288,7 +288,7 @@ static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, ui
 
 				if (fwrite(input, 1, blockRead, outp) != blockRead)
 				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive\n", blockRead);
+					fprintf(stderr, "create: Failed writing %u bytes to archive\n", (unsigned int)blockRead);
 					fclose(inp);
 					inp = NULL;
 					break;
@@ -301,7 +301,7 @@ static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, ui
 				block.compressed = (uint16_t)result;
 				if (fwrite(&block, 1, sizeof(block), outp) != sizeof(block))
 				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive\n", sizeof(block));
+					fprintf(stderr, "create: Failed writing %u bytes to archive\n", (unsigned int)sizeof(block));
 					fclose(inp);
 					inp = NULL;
 					break;
@@ -309,7 +309,7 @@ static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, ui
 
 				if (fwrite(output, 1, block.compressed, outp) != block.compressed)
 				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive\n", result);
+					fprintf(stderr, "create: Failed writing %u bytes to archive\n", (unsigned int)result);
 					fclose(inp);
 					inp = NULL;
 					break;
@@ -326,7 +326,7 @@ static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, ui
 
 		if (inp)
 		{
-			fprintf(stderr, "Added file \"%s\" (%u bytes) (as \"%s\", %u bytes), %s\n", entry->path, totalRead, entry->internalPath, totalWritten, entry->compression != FILEARCHIVE_COMPRESSION_NONE ? "(compressed)" : "(raw)");
+			fprintf(stderr, "Added file \"%s\" (%u bytes) (as \"%s\", %u bytes), %s\n", entry->path, (unsigned int)totalRead, entry->internalPath, (unsigned int)totalWritten, entry->compression != FILEARCHIVE_COMPRESSION_NONE ? "(compressed)" : "(raw)");
 
 			fclose(inp);
 			inp = NULL;
