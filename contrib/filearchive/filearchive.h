@@ -10,47 +10,74 @@ typedef struct FileArchiveHeader FileArchiveHeader;
 
 struct FileArchiveContainer
 {
-	uint32_t parent;	// FileArchiveContainer
-	uint32_t children;	// FileArchiveContainer
-	uint32_t next;		// FileArchiveContainer
+	uint32_t parent;	// Offset to parent container (FileArchiveContainer)
+	uint32_t children;	// Offset to child containers (FileArchiveContainer)
+	uint32_t next;		// Offset to next sibling container (FileArchiveContainer)
 
-	uint32_t files;		// FileArchiveEntry
+	uint32_t files;		// Offset to first file in container (FileArchiveEntry)
+	uint32_t count;		// number of entries
 
-	char name[256];
+	uint32_t name;		// Offset to container name
 };
 
 struct FileArchiveEntry
 {
-	uint32_t container;	// FileArchiveContainer
-	uint32_t next;		// FileArchiveEntry
-
-	uint32_t compression;
-	uint32_t offset;
+	uint32_t data;			// Offset to file data
+	uint32_t name;			// Offset to name
 
 	struct
 	{
-		uint32_t original;
-		uint32_t compressed;
+		uint8_t compression;	// Compression method used in file
+		uint8_t reserved;	// Reserved for future use, keep at zero
+		uint16_t flags;		// File flags
+	} flags;
+
+	struct
+	{
+		uint32_t original;	// original file size when uncompressed
+		uint32_t compressed;	// compressed file size in archive
 	} size;
 
-	uint16_t blockSize;
-	uint16_t maxCompressedBlock;
-
-	char name[256];
+	uint16_t blockSize;		// block size required for decompression
+	uint16_t largestBlock;		// size of the largest compressed block
 };
 
 struct FileArchiveCompressedBlock
 {
 	uint16_t original;
-	uint16_t compressed; // FILEARCHIVE_COMPRESSION_SIZE_IGNORE == block uncompressed
+	uint16_t compressed; 		// FILEARCHIVE_COMPRESSION_SIZE_IGNORE == block uncompressed
 };
 
 struct FileArchiveHeader
 {
-	uint32_t cookie;
-	uint32_t version;
-	uint32_t size;
-	uint32_t flags;
+	uint32_t cookie;		// Magic cookie
+	uint32_t version;		// Version of archive
+	uint32_t size;			// Size of header TOC
+	uint32_t flags;			// Flags
+
+	// Version 1
+
+	uint32_t containers;		// Offset to containers (first container == root folder)
+	uint32_t containerCount;	// Number of containers in archive
+
+	uint32_t files;			// Offset to list of files
+	uint32_t fileCount;		// Number of files in archive
+};
+
+struct FileArchiveFooter
+{
+	uint32_t cookie;		// Magic cookie
+	uint32_t offset;		// Offset to header
+
+	uint8_t version;		// Version of footer
+	uint8_t compression;		// Compression used on header TOC
+	uint16_t flags;			// Footer flags			
+
+	struct
+	{
+		uint32_t original;	// Header size, uncompressed
+		uint32_t compressed;	// Header size, compressed
+	} size;
 };
 
 #define FILEARCHIVE_VERSION_1 (1)
