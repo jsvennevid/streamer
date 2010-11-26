@@ -131,6 +131,10 @@ Program
 		Glob { Dir = "contrib/filearchive", Extensions = { ".c" } }
 	},
 
+	Env = {
+		CPPPATH = "contrib"
+	},
+
 	Depends = {
 		"contrib.fastlz"
 	}

@@ -1,5 +1,7 @@
 #include "filearchive.h"
 
+#include <fastlz/fastlz.h>
+
 #if defined(_WIN32)
 #pragma warning(disable: 4996)
 #include <windows.h>
@@ -43,13 +45,13 @@ struct FileList
 	struct FileEntry* files;
 };
 
-int addSpecFile(struct FileList* files, const char* specFile, int compression)
+static int addSpecFile(struct FileList* files, const char* specFile, int compression)
 {
 	fprintf(stderr, "create: Support for spec files not complete\n");
 	return -1;
 }
 
-int addFile(struct FileList* files, const char* path, const char* internalPath, int compression)
+static int addFile(struct FileList* files, const char* path, const char* internalPath, int compression)
 {
 	struct FileEntry* entry;
 #if defined(_WIN32)
@@ -57,8 +59,6 @@ int addFile(struct FileList* files, const char* path, const char* internalPath, 
 #else
 	struct stat fs;
 #endif
-
-	fprintf(stderr, "addFile - path: \"%s\", internal path: \"%s\"\n", path, internalPath);
 
 	if ('@' == *path)
 	{
@@ -161,13 +161,14 @@ int addFile(struct FileList* files, const char* path, const char* internalPath, 
 
 	entry = &(files->files[files->count++]);
 
+	entry->compression = compression;
 	entry->path = strdup(path);
 	entry->internalPath = strdup(internalPath);
 
 	return 0;
 }
 
-void freeFiles(struct FileList* files)
+static void freeFiles(struct FileList* files)
 {
 	unsigned int i;
 	for (i = 0; i < files->count; ++i)
@@ -179,12 +180,179 @@ void freeFiles(struct FileList* files)
 	free(files->files);
 }
 
+static int compress_block(const void* input, int length, void* output, int maxLength, int compression)
+{
+	switch (compression)
+	{
+		case FILEARCHIVE_COMPRESSION_NONE: return -1;
+		case FILEARCHIVE_COMPRESSION_FASTLZ:
+		{
+			int result;
+
+			if (length < 16)
+			{
+				return -1;
+			}
+
+			result = fastlz_compress_level(2, input, length, output);
+			if (result >= length)
+			{
+				return -1;
+			}
+			return result;
+		}
+		break;
+	}
+
+	return -1;
+}
+
+static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, uint32_t offset)
+{
+	unsigned int i;
+	FILE* inp = NULL;
+
+	int blockSize = 16384;
+	char* input = malloc(blockSize);
+	char* output = malloc(blockSize * 2);
+
+	for (i = 0; i < files->count; ++i)
+	{
+		struct FileEntry* entry = &(files->files[i]);
+		size_t totalRead = 0, totalWritten = 0;
+		size_t blockRead;
+
+		inp = fopen(entry->path, "rb");
+		if (inp == NULL)
+		{
+			fprintf(stderr, "create: Failed opening \"%s\" for reading\n", entry->path);
+			break;
+		}
+
+		if ((blockAlignment != 0) && ((offset % blockAlignment) != 0))
+		{
+			uint32_t bytes = offset % blockAlignment;
+			uint32_t current = 0;
+
+			memset(input, 0, 1024);
+
+			while (current < bytes)
+			{
+				uint32_t bytesMax = bytes - current > 1024 ? 1024 : bytes-current;
+				if (fwrite(input, 1, bytesMax, outp) != bytesMax)
+				{
+					fprintf(stderr, "create: Failed writing %u bytes to archive.\n");
+					break;
+				}
+
+				current += bytesMax;
+			}
+
+			if (current != bytes)
+			{
+				break;
+			}
+		}
+
+		while (inp && (blockRead = fread(input, 1, blockSize, inp)) > 0)
+		{
+			FileArchiveCompressedBlock block;
+			int result;
+
+			totalRead += blockRead;
+
+			if (entry->compression == FILEARCHIVE_COMPRESSION_NONE)
+			{
+				if (fwrite(input, 1, blockRead, outp) != blockRead)
+				{
+					fprintf(stderr, "create: Failed writing %u bytes to archive\n", blockRead);
+					fclose(inp);
+					inp = NULL;
+				}
+				totalWritten += blockRead;
+				continue;
+			}
+			
+			result = compress_block(input, blockRead, output, blockSize * 2, entry->compression);
+
+			if (result < 0)
+			{
+				block.compressed = FILEARCHIVE_COMPRESSION_SIZE_IGNORE;
+				if (fwrite(&block, 1, sizeof(block), outp) != sizeof(block))
+				{
+					fprintf(stderr, "create: Failed writing %u bytes to archive\n", sizeof(block));
+					fclose(inp);
+					inp = NULL;
+					break;
+				}
+
+				if (fwrite(input, 1, blockRead, outp) != blockRead)
+				{
+					fprintf(stderr, "create: Failed writing %u bytes to archive\n", blockRead);
+					fclose(inp);
+					inp = NULL;
+					break;
+				}
+
+				totalWritten += sizeof(block) + blockRead;
+			}
+			else
+			{
+				block.compressed = (uint16_t)result;
+				if (fwrite(&block, 1, sizeof(block), outp) != sizeof(block))
+				{
+					fprintf(stderr, "create: Failed writing %u bytes to archive\n", sizeof(block));
+					fclose(inp);
+					inp = NULL;
+					break;
+				}
+
+				if (fwrite(output, 1, block.compressed, outp) != block.compressed)
+				{
+					fprintf(stderr, "create: Failed writing %u bytes to archive\n", result);
+					fclose(inp);
+					inp = NULL;
+					break;
+				}
+
+				totalWritten += sizeof(block) + result;
+			}
+		}
+
+		entry->offset = offset;
+		entry->size.original = totalRead;
+		entry->size.compressed = totalWritten;
+		offset += totalWritten;
+
+		if (inp)
+		{
+			fprintf(stderr, "Added file \"%s\" (%u bytes) (as \"%s\", %u bytes), %s\n", entry->path, totalRead, entry->internalPath, totalWritten, entry->compression != FILEARCHIVE_COMPRESSION_NONE ? "(compressed)" : "(raw)");
+
+			fclose(inp);
+			inp = NULL;
+		}
+	}
+
+	free(input);
+	free(output);
+
+	if (inp != NULL)
+	{
+		fclose(inp);
+	}
+
+	return (i == files->count) ? 0 : -1;
+}
+
 int commandCreate(int argc, char* argv[])
 {
 	int i;
 	State state = State_Options;
 	int compression = FILEARCHIVE_COMPRESSION_NONE;
+	int blockAlignment = 0;
 	struct FileList files = { 0 };
+	const char* archive = NULL;
+	FILE* archp = NULL;
 
 	for (i = 2; i < argc; ++i)
 	{
@@ -222,13 +390,22 @@ int commandCreate(int argc, char* argv[])
 						return -1;
 					}
 				}
+				else if (!strcmp("-s", argv[i]))
+				{
+					blockAlignment = 2048;
+				}
+				else
+				{
+					fprintf(stderr, "create: Unknown option \"%s\"\n", argv[i]);
+					return -1;
+				}
 
 			}
 			break;
 
 			case State_Archive:
 			{
-				// archive = argv[i];
+				archive = argv[i];
 				state = State_Files;
 			}
 			break;
@@ -271,6 +448,22 @@ int commandCreate(int argc, char* argv[])
 	if (files.count == 0)
 	{
 		fprintf(stderr, "create: No files available for use\n");
+		freeFiles(&files);
+		return -1;
+	}
+
+	archp = fopen(archive, "wb");
+	if (archp == NULL)
+	{
+		fprintf(stderr, "create: Could not open archive \"%s\" for writing\n", archive);
+		freeFiles(&files);
+		return -1;
+	}
+
+	if (writeFiles(archp, &files, blockAlignment, 0) < 0)
+	{
+		fprintf(stderr, "create: Failed writing files to archive\n");
+		fclose(archp);
 		freeFiles(&files);
 		return -1;
 	}

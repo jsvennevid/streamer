@@ -25,12 +25,7 @@ struct FileArchiveEntry
 	uint32_t data;			// Offset to file data
 	uint32_t name;			// Offset to name
 
-	struct
-	{
-		uint8_t compression;	// Compression method used in file
-		uint8_t reserved;	// Reserved for future use, keep at zero
-		uint16_t flags;		// File flags
-	} flags;
+	uint32_t compression;		// Compression method used in file
 
 	struct
 	{
@@ -67,11 +62,10 @@ struct FileArchiveHeader
 struct FileArchiveFooter
 {
 	uint32_t cookie;		// Magic cookie
-	uint32_t offset;		// Offset to header
+	uint32_t header;		// Offset to header (relative to end of footer)
+	uint32_t data;			// Offset to data (relative to end of footer)
 
-	uint8_t version;		// Version of footer
-	uint8_t compression;		// Compression used on header TOC
-	uint16_t flags;			// Footer flags			
+	uint32_t compression;		// Compression used on header
 
 	struct
 	{
