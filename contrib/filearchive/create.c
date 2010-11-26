@@ -97,6 +97,7 @@ int addFile(struct FileList* files, const char* path, const char* internalPath, 
 
 				if (addFile(files, newPath, newInternalPath, compression) < 0)
 				{
+					FindClose(dh);
 					return -1;
 				}
 			}
@@ -116,8 +117,37 @@ int addFile(struct FileList* files, const char* path, const char* internalPath, 
 
 	if (fs.st_mode & S_IFDIR)
 	{
-		fprintf(stderr, "create: Adding directories not implemented\n");
-		return -1;
+		DIR* dir = opendir(path);
+		struct dirent* dirEntry;
+
+		if (dir == NULL)
+		{
+			fprintf(stderr, "create: Could not open directory \"%s\"\n", path);
+			return -1;
+		}
+
+		while ((dirEntry = readdir(dir)) != NULL)
+		{
+			char newPath[PATH_MAX];
+			char newInternalPath[PATH_MAX];
+
+			if (!strcmp(".", dirEntry->d_name) || !strcmp("..", dirEntry->d_name))
+			{
+				continue;
+			}
+
+			snprintf(newPath, sizeof(newPath), "%s/%s", path, dirEntry->d_name);
+			snprintf(newInternalPath, sizeof(newPath), "%s/%s", internalPath, dirEntry->d_name);
+
+			if (addFile(files, newPath, newInternalPath, compression) < 0)
+			{
+				closedir(dir);
+				return -1;
+			}
+		}
+
+		closedir(dir);
+		return 0;
 	}
 #endif
 

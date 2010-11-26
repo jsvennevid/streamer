@@ -67,4 +67,6 @@ int main(int argc, char* argv[])
 		showHelp(NULL);
 		return 1;
 	}
+
+	return 0;
 }
