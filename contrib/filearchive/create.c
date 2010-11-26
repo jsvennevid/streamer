@@ -1,11 +1,18 @@
 #include "filearchive.h"
 
+#if defined(_WIN32)
+#pragma warning(disable: 4996)
+#include <windows.h>
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
 
+#if !defined(_WIN32)
+#include <dirent.h>
 #include <sys/stat.h>
+#endif
 
 typedef enum
 {
@@ -44,42 +51,89 @@ int addSpecFile(struct FileList* files, const char* specFile, int compression)
 
 int addFile(struct FileList* files, const char* path, const char* internalPath, int compression)
 {
+	struct FileEntry* entry;
+#if defined(_WIN32)
+	DWORD attrs;
+#else
+	struct stat fs;
+#endif
+
+	fprintf(stderr, "addFile - path: \"%s\", internal path: \"%s\"\n", path, internalPath);
+
 	if ('@' == *path)
 	{
 		return addSpecFile(files, path+1, compression);
 	}
-	else
+
+#if defined(_WIN32)
+	if ((attrs = GetFileAttributes(path)) == INVALID_FILE_ATTRIBUTES)
 	{
-		struct stat fs;
-		struct FileEntry* entry = 0;
-
-		if (stat(path, &fs) < 0)
-		{
-			fprintf(stderr, "create: Could not stat file \"%s\"\n", path);
-			return -1;
-		}
-
-		if (fs.st_mode & S_IFDIR)
-		{
-			fprintf(stderr, "create: Adding directories not implemented\n");
-			return -1;
-		}
-
-		if (files->count == files->capacity)
-		{
-			int newCapacity = files->capacity < 128 ? 128 : files->capacity * 2;
-			files->files = realloc(files->files, newCapacity * sizeof(struct FileEntry));
-			memset(files->files + sizeof(struct FileEntry) * files->capacity, 0, sizeof(struct FileEntry) * (newCapacity - files->capacity));
-			files->capacity = newCapacity;
-		}
-
-		entry = &(files->files[files->count++]);
-
-		entry->path = strdup(path);
-		entry->internalPath = strdup(internalPath);
-
-		fprintf(stderr, "File: \"%s\"\n", path);
+		fprintf(stderr, "create: Could not get attributes for file \"%s\"\n", path);
+		return -1;
 	}
+
+	if (attrs & FILE_ATTRIBUTE_DIRECTORY)
+	{
+		WIN32_FIND_DATA data;
+		char searchPath[MAX_PATH];
+		HANDLE dh;
+		
+		sprintf_s(searchPath, sizeof(searchPath), "%s\\*", path);
+		dh = FindFirstFile(searchPath, &data);
+		if (dh != INVALID_HANDLE_VALUE)
+		{
+			do
+			{
+				char newPath[MAX_PATH];
+				char newInternalPath[MAX_PATH];
+
+				if (!strcmp(".", data.cFileName) || !strcmp("..", data.cFileName))
+				{
+					continue;
+				}
+
+				sprintf_s(newPath, sizeof(newPath), "%s\\%s", path, data.cFileName);
+				sprintf_s(newInternalPath, sizeof(newPath), "%s\\%s", internalPath, data.cFileName);
+
+				if (addFile(files, newPath, newInternalPath, compression) < 0)
+				{
+					return -1;
+				}
+			}
+			while (FindNextFile(dh, &data));
+
+			FindClose(dh);
+		}
+
+		return 0;
+	}
+#else
+	if (stat(path, &fs) < 0)
+	{
+		fprintf(stderr, "create: Could not stat file \"%s\"\n", path);
+		return -1;
+	}
+
+	if (fs.st_mode & S_IFDIR)
+	{
+		fprintf(stderr, "create: Adding directories not implemented\n");
+		return -1;
+	}
+#endif
+
+	if (files->count == files->capacity)
+	{
+		int newCapacity = files->capacity < 128 ? 128 : files->capacity * 2;
+		files->files = realloc(files->files, newCapacity * sizeof(struct FileEntry));
+		memset(files->files + sizeof(struct FileEntry) * files->capacity, 0, sizeof(struct FileEntry) * (newCapacity - files->capacity));
+		files->capacity = newCapacity;
+	}
+
+	entry = &(files->files[files->count++]);
+
+	entry->path = strdup(path);
+	entry->internalPath = strdup(internalPath);
+
 	return 0;
 }
 
@@ -163,7 +217,7 @@ int commandCreate(int argc, char* argv[])
 #if defined(_WIN32)
 				if ((!sep && sep2) || (sep2 > sep))
 				{
-					interalPath = sep2+1;
+					internalPath = sep2+1;
 				}
 #endif
 				if (addFile(&files, argv[i], internalPath, compression) < 0)
