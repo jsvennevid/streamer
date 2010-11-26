@@ -85,5 +85,7 @@ struct FileArchiveFooter
 #define FILEARCHIVE_COMPRESSION_SIZE_IGNORE 0x8000
 #define FILEARCHIVE_COMPRESSION_SIZE_MASK 0x7fff
 
+#define FILEARCHIVE_INVALID_OFFSET (0xffffffff)
+
 #endif
 

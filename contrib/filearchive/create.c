@@ -3,7 +3,7 @@
 #include <fastlz/fastlz.h>
 
 #if defined(_WIN32)
-#pragma warning(disable: 4996)
+#pragma warning(disable: 4127 4996)
 #include <windows.h>
 #endif
 
@@ -36,6 +36,8 @@ struct FileEntry
 
 	char* path;
 	char* internalPath;
+
+	uint32_t container;
 };
 
 struct FileList
@@ -56,6 +58,7 @@ static int addFile(struct FileList* files, const char* path, const char* interna
 	struct FileEntry* entry;
 #if defined(_WIN32)
 	DWORD attrs;
+	char* curr;
 #else
 	struct stat fs;
 #endif
@@ -164,6 +167,17 @@ static int addFile(struct FileList* files, const char* path, const char* interna
 	entry->compression = compression;
 	entry->path = strdup(path);
 	entry->internalPath = strdup(internalPath);
+	entry->container = FILEARCHIVE_INVALID_OFFSET;
+
+#if defined(_WIN32)
+	for (curr = entry->internalPath; *curr; ++curr)
+	{
+		if (*curr == '\\')
+		{
+			*curr = '/';
+		}
+	}
+#endif
 
 	return 0;
 }
@@ -207,7 +221,26 @@ static int compress_block(const void* input, int length, void* output, int maxLe
 	return -1;
 }
 
-static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, uint32_t offset)
+static int writePadding(FILE* outp, uint32_t size)
+{
+	char buf[1024];
+	uint32_t curr = 0;
+
+	memset(buf, 0, sizeof(buf));
+
+	while (curr != size)
+	{
+		uint32_t bytesMax = (size - curr) > sizeof(buf) ? sizeof(buf) : size-curr;
+		if (fwrite(buf, 1, bytesMax, outp) != bytesMax)
+		{
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static uint32_t writeFiles(FILE* outp, struct FileList* files, int blockAlignment, uint32_t offset)
 {
 	unsigned int i;
 	FILE* inp = NULL;
@@ -232,24 +265,9 @@ static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, ui
 		if ((blockAlignment != 0) && ((offset % blockAlignment) != 0))
 		{
 			uint32_t bytes = offset % blockAlignment;
-			uint32_t current = 0;
-
-			memset(input, 0, 1024);
-
-			while (current < bytes)
+			if (writePadding(outp, bytes) < 0)
 			{
-				uint32_t bytesMax = bytes - current > 1024 ? 1024 : bytes-current;
-				if (fwrite(input, 1, bytesMax, outp) != bytesMax)
-				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive.\n");
-					break;
-				}
-
-				current += bytesMax;
-			}
-
-			if (current != bytes)
-			{
+				fprintf(stderr, "create: Failed writing %u bytes to archive.\n");
 				break;
 			}
 		}
@@ -341,7 +359,175 @@ static int writeFiles(FILE* outp, struct FileList* files, int blockAlignment, ui
 		fclose(inp);
 	}
 
-	return (i == files->count) ? 0 : -1;
+	return (i == files->count) ? offset : 0;
+}
+
+static uint32_t findContainer(const char* path, const FileArchiveContainer* root, const char* stringBuffer)
+{
+	const char* curr = path;
+	const char* term;
+	uint32_t offset = 0;
+
+	fprintf(stderr, "findContainer - \"%s\"\n", path);
+
+	while ((term = strchr(curr, '/')) != NULL)
+	{
+		size_t nlen = (term-curr);
+		const FileArchiveContainer* parent = (const FileArchiveContainer*)(((const char*)root) + offset);
+		uint32_t child = parent->children;
+
+		for (child = parent->children; child != FILEARCHIVE_INVALID_OFFSET;)
+		{
+			FileArchiveContainer* childContainer = (const FileArchiveContainer*)(((const char*)root) + child);
+			const char* name = childContainer->name != FILEARCHIVE_INVALID_OFFSET ? stringBuffer + childContainer->name : NULL;
+
+			fprintf(stderr, "Looking at \"%s\"\n", name ? name : "(unnamed)");
+
+			if (name && (strlen(name) == nlen) && !memcmp(name, curr, nlen))
+			{
+				break;
+			}
+
+			child = childContainer->next;
+		}
+
+		if (child == FILEARCHIVE_INVALID_OFFSET)
+		{
+			return FILEARCHIVE_INVALID_OFFSET;
+		}
+
+		offset = child;
+		curr = term+1;
+	}
+
+	fprintf(stderr, "Found container at offset %08lx\n", (unsigned int)offset);
+
+	return offset;
+}
+
+static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset, uint32_t blockAlignment)
+{
+	size_t containerCapacity = 128, containerCount = 0;
+	FileArchiveContainer* containerEntries = malloc(containerCapacity * sizeof(FileArchiveContainer));
+	unsigned int i;
+
+	size_t stringCapacity = 1024, stringSize = 0;
+	char* stringBuffer = malloc(stringCapacity);
+
+	do
+	{
+		/* block align header */
+
+		if ((blockAlignment != 0) && (offset % blockAlignment != 0))
+		{
+			uint32_t bytes = offset % blockAlignment;
+
+			if (writePadding(outp, bytes) < 0)
+			{
+				fprintf(stderr, "create: Failed writing %u bytes to archive.\n", (unsigned int)bytes);
+				offset = 0;
+				break;
+			}
+		}
+
+		/* construct containers */
+
+		containerEntries->parent = FILEARCHIVE_INVALID_OFFSET;
+		containerEntries->children = FILEARCHIVE_INVALID_OFFSET;
+		containerEntries->next = FILEARCHIVE_INVALID_OFFSET;
+		containerEntries->files = FILEARCHIVE_INVALID_OFFSET;
+		containerEntries->count = 0;
+		containerEntries->name = FILEARCHIVE_INVALID_OFFSET;
+		++ containerCount;
+
+		for (i = 0; i < files->count; ++i)
+		{
+			struct FileEntry* entry = &(files->files[i]);
+			char* path = entry->internalPath;
+			char* curr = path;
+			char* offset = NULL;
+			uint32_t parent = 0;
+
+			while ((offset = strchr(curr, '/')) != NULL)
+			{
+				uint32_t actual;
+				char temp = *(offset+1);
+				*(offset+1) = 0;
+
+				if ((actual = findContainer(path, containerEntries, stringBuffer)) == FILEARCHIVE_INVALID_OFFSET)
+				{
+					size_t nlen = strlen(curr);
+					FileArchiveContainer* container;
+					FileArchiveContainer* parentContainer;
+
+					if (containerCapacity == containerCount)
+					{
+						containerCapacity *= 2;
+						containerEntries = realloc(containerEntries, containerCapacity * sizeof(FileArchiveContainer));
+					}
+
+					container = &containerEntries[containerCount++];
+					parentContainer = (FileArchiveContainer*)(((uint8_t*)containerEntries) + parent);
+
+					/* TODO: attach new container to end of sibling list instead */
+
+					container->parent = parent;
+					container->children = FILEARCHIVE_INVALID_OFFSET;
+					container->next = parentContainer->children;
+					container->files = FILEARCHIVE_INVALID_OFFSET;
+					container->count = 0;
+					container->name = stringSize;
+					if (stringSize + nlen > stringCapacity)
+					{
+						stringCapacity = stringCapacity * 2 < stringSize + nlen ? stringSize + nlen : stringCapacity * 2;
+						stringBuffer = realloc(stringBuffer, stringCapacity);
+					}
+					memcpy(stringBuffer + stringSize, curr, nlen);
+					*(stringBuffer + stringSize + nlen -1) = '\0';
+					stringSize += nlen;
+
+					fprintf(stderr, "Added container \"%s\" for path \"%s\"\n", (stringBuffer + container->name), path);
+
+					parentContainer->children = parent = (container - containerEntries) * sizeof(FileArchiveContainer);
+				}
+				else
+				{
+					parent = actual;
+				}
+
+				*(offset+1) = temp;
+				curr = offset+1;
+			}
+		}
+
+		/* construct files */
+
+		for (i = 0; i < files->count; ++i)
+		{
+			struct FileEntry* entry = &(files->files[i]);
+			uint32_t offset = findContainer(entry->internalPath, containerEntries, stringBuffer);
+			if (offset == FILEARCHIVE_INVALID_OFFSET)
+			{
+				fprintf(stderr, "create: Failed to resolve container for file \"%s\" while constructing index\n");
+				break;
+			}
+
+			entry->container = offset;
+		}
+
+		if (i != files->count)
+		{
+			break;
+		}
+
+		/* relocate and write blocks */
+	}	
+	while (0);
+
+	free(containerEntries);
+	free(stringBuffer);
+
+	return offset;
 }
 
 int commandCreate(int argc, char* argv[])
@@ -353,6 +539,7 @@ int commandCreate(int argc, char* argv[])
 	struct FileList files = { 0 };
 	const char* archive = NULL;
 	FILE* archp = NULL;
+	uint32_t offset = 0;
 
 	for (i = 2; i < argc; ++i)
 	{
@@ -460,7 +647,7 @@ int commandCreate(int argc, char* argv[])
 		return -1;
 	}
 
-	if (writeFiles(archp, &files, blockAlignment, 0) < 0)
+	if ((offset = writeFiles(archp, &files, blockAlignment, offset)) == 0)
 	{
 		fprintf(stderr, "create: Failed writing files to archive\n");
 		fclose(archp);
@@ -468,6 +655,15 @@ int commandCreate(int argc, char* argv[])
 		return -1;
 	}
 
+	if ((offset = writeHeader(archp, &files, blockAlignment, offset)) == 0)
+	{
+		fprintf(stderr, "create: Failed writing header to archive\n");
+		fclose(archp);
+		freeFiles(&files);
+		return -1;
+	}
+
+	fclose(archp);
 	freeFiles(&files);
 	return 0;
 }
