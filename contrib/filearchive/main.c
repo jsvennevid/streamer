@@ -2,6 +2,7 @@
 #include <string.h>
 
 int commandCreate(int argc, char* argv[]);
+int commandList(int argc, char* argv[]);
 int commandHelp(const char* command);
 
 int main(int argc, char* argv[])
@@ -21,6 +22,14 @@ int main(int argc, char* argv[])
 		if (commandCreate(argc, argv) < 0)
 		{
 			commandHelp("create");
+			return 1;
+		}
+	}
+	else if (!strcmp("list", argv[1]))
+	{
+		if (commandList(argc, argv) < 0)
+		{
+			commandHelp("list");
 			return 1;
 		}
 	}

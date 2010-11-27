@@ -8,13 +8,14 @@ void commandHelp(char* command)
 	if (command == NULL)
 	{
 		fprintf(stderr, "filearchive <command> ...\n");
-		fprintf(stderr, "command = create, help\n\n");
+		fprintf(stderr, "command = create, help,list\n\n");
 		return;
 	}
 	else if (!strcmp("help", command))
 	{
 		fprintf(stderr, "Help is available for the following commands:\n\n");
 		fprintf(stderr, "\tcreate\n");
+		fprintf(stderr, "\tlist\n");
 		fprintf(stderr, "\n");
 		return;
 	}
@@ -32,6 +33,12 @@ void commandHelp(char* command)
 		fprintf(stderr, "\nSpec file format:\n");
 		fprintf(stderr, "\"<file path>\" <options>\n");
 		fprintf(stderr, "\n");
+		return;
+	}
+	else if (!strcmp("list", command))
+	{
+		fprintf(stderr, "filearchive list <archive> ...\n\n");
+		fprintf(stderr, "List contents of one or more archives.\n\n");
 		return;
 	}
 

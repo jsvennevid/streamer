@@ -60,6 +60,9 @@ typedef struct CommandContext
 	uint32_t blockAlignment;
 	uint32_t verbose;
 
+	uint32_t containerCount;
+	uint32_t fileCount;
+
 	struct
 	{
 		uint32_t offset;
@@ -716,7 +719,7 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 		header.fileCount = fileCount;
 
 		data.blocks[0].begin = (const void*)&header;
-		data.blocks[0].end = (const void*)(&header + sizeof(header));
+		data.blocks[0].end = (const void*)(&header + 1);
 
 		data.blocks[1].begin = (const void*)containerEntries;
 		data.blocks[1].end = (const void*)(containerEntries + containerCount);
@@ -735,6 +738,8 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 			break;
 		}
 
+		context->containerCount = containerCount;
+		context->fileCount = fileCount; 
 		context->header.offset = offset;
 		context->header.size.original = data.totalRead;
 		context->header.size.compressed = result;
@@ -755,7 +760,7 @@ uint32_t writeFooter(FILE* outp, uint32_t offset, CommandContext* context)
 
 	footer.cookie = FILEARCHIVE_MAGIC_COOKIE;
 	footer.header = offset - context->header.offset;
-	footer.data = offset;
+	footer.data = offset - context->data.offset;
 	footer.compression = context->compression;
 	footer.size.original = context->header.size.original;
 	footer.size.compressed = context->header.size.compressed;
@@ -914,6 +919,7 @@ int commandCreate(int argc, char* argv[])
 		}
 
 		fprintf(stderr, "Archive \"%s\" created successfully. Statistics: \n", archive);
+		fprintf(stderr, "   Containers: %u Files: %u\n", context.containerCount, context.fileCount);
 		fprintf(stderr, "   Data block: %u bytes, %u bytes uncompressed (ratio: %.2f%%)\n", context.data.size.compressed, context.data.size.original, (1.0f-((float)context.data.size.compressed / (float)context.data.size.original)) * 100.0f);
 		fprintf(stderr, "   Header block: %u bytes, %u bytes uncompressed (ratio: %.2f%%)\n", context.header.size.compressed, context.header.size.original, (1.0f-((float)context.header.size.compressed / (float)context.header.size.original)) * 100.0f);
 		fprintf(stderr, "   Footer block: %u bytes\n", context.footer.size.original);

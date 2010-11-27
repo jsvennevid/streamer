@@ -62,8 +62,8 @@ struct FileArchiveHeader
 struct FileArchiveFooter
 {
 	uint32_t cookie;		// Magic cookie
-	uint32_t header;		// Offset to header (relative to end of footer)
-	uint32_t data;			// Offset to data (relative to end of footer)
+	uint32_t header;		// Offset to header (relative to beginning of footer)
+	uint32_t data;			// Offset to data (relative to beginning of footer)
 
 	uint32_t compression;		// Compression used on header
 
