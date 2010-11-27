@@ -1,0 +1,35 @@
+#include <stdio.h>
+#include <string.h>
+
+int commandCreate(int argc, char* argv[]);
+int commandHelp(const char* command);
+
+int main(int argc, char* argv[])
+{
+	if (argc < 2)
+	{
+		commandHelp(NULL);
+		return 0;
+	}
+	else if (!strcmp("help", argv[1]))
+	{
+		commandHelp(argc >= 3 ? argv[2] : argv[1]);
+		return 0;
+	}
+	else if (!strcmp("create", argv[1]))
+	{
+		if (commandCreate(argc, argv) < 0)
+		{
+			commandHelp("create");
+			return 1;
+		}
+	}
+	else
+	{
+		fprintf(stderr, "Unknown filearchive command.\n");
+		commandHelp(NULL);
+		return 1;
+	}
+
+	return 0;
+}

@@ -7,6 +7,7 @@ typedef struct FileArchiveContainer FileArchiveContainer;
 typedef struct FileArchiveEntry FileArchiveEntry;
 typedef struct FileArchiveCompressedBlock FileArchiveCompressedBlock;
 typedef struct FileArchiveHeader FileArchiveHeader;
+typedef struct FileArchiveFooter FileArchiveFooter;
 
 struct FileArchiveContainer
 {
@@ -34,7 +35,6 @@ struct FileArchiveEntry
 	} size;
 
 	uint16_t blockSize;		// block size required for decompression
-	uint16_t largestBlock;		// size of the largest compressed block
 };
 
 struct FileArchiveCompressedBlock
@@ -75,7 +75,7 @@ struct FileArchiveFooter
 };
 
 #define FILEARCHIVE_VERSION_1 (1)
-#define FILEARCHIVE_VERSION_CURRENT	FILEARCHIVE_VERSION_CURRENT
+#define FILEARCHIVE_VERSION_CURRENT	FILEARCHIVE_VERSION_1
 
 #define FILEARCHIVE_MAGIC_COOKIE (('F' << 24) | ('A' << 16) | ('R' << 8) | ('C'))
 
@@ -84,6 +84,8 @@ struct FileArchiveFooter
 
 #define FILEARCHIVE_COMPRESSION_SIZE_IGNORE 0x8000
 #define FILEARCHIVE_COMPRESSION_SIZE_MASK 0x7fff
+
+#define FILEARCHIVE_COMPRESSION_BLOCK_SIZE (16384)
 
 #define FILEARCHIVE_INVALID_OFFSET (0xffffffff)
 

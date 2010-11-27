@@ -16,6 +16,10 @@
 #include <sys/stat.h>
 #endif
 
+#if defined(__APPLE__)
+#include <sys/syslimits.h>
+#endif
+
 typedef enum
 {
 	State_Options,
@@ -36,8 +40,11 @@ struct FileEntry
 
 	char* path;
 	char* internalPath;
+	const char* filePart;
 
 	uint32_t container;
+
+	uint32_t blockSize;
 };
 
 struct FileList
@@ -46,6 +53,23 @@ struct FileList
 	unsigned int capacity;
 	struct FileEntry* files;
 };
+
+typedef struct CommandContext
+{
+	uint32_t compression;
+	uint32_t blockAlignment;
+	uint32_t verbose;
+
+	struct
+	{
+		uint32_t offset;
+		struct
+		{
+			uint32_t original;
+			uint32_t compressed;
+		} size;
+	} data, header, footer;
+} CommandContext;
 
 static int addSpecFile(struct FileList* files, const char* specFile, int compression)
 {
@@ -176,8 +200,11 @@ static int addFile(struct FileList* files, const char* path, const char* interna
 		{
 			*curr = '/';
 		}
+		*curr = tolower(*curr);
 	}
 #endif
+
+	entry->filePart = (strrchr(entry->internalPath, '/') != NULL) ? strrchr(entry->internalPath, '/') + 1 : entry->internalPath;
 
 	return 0;
 }
@@ -194,31 +221,101 @@ static void freeFiles(struct FileList* files)
 	free(files->files);
 }
 
-static int compress_block(const void* input, int length, void* output, int maxLength, int compression)
+#define COMPRESS_RESULT_ERROR (0xFFFFFFFF)
+typedef uint32_t (*CompressCallback)(void* buffer, uint32_t maxLength, void* userData);
+static uint32_t compressStream(FILE* outp, uint32_t compression, void* inbuf, uint32_t inlen, void* outbuf, uint32_t outlen, CompressCallback callback, void* userData)
 {
-	switch (compression)
+	uint32_t total = 0;
+	for(;;)
 	{
-		case FILEARCHIVE_COMPRESSION_NONE: return -1;
-		case FILEARCHIVE_COMPRESSION_FASTLZ:
+		uint32_t size = callback(inbuf, inlen, userData);
+		if (size == 0)
 		{
-			int result;
-
-			if (length < 16)
-			{
-				return -1;
-			}
-
-			result = fastlz_compress_level(2, input, length, output);
-			if (result >= length)
-			{
-				return -1;
-			}
-			return result;
+			break;
 		}
-		break;
+
+		if (compression == FILEARCHIVE_COMPRESSION_NONE)
+		{
+			if (fwrite(inbuf, 1, size, outp) != size)
+			{
+				return COMPRESS_RESULT_ERROR;
+			}
+			total += size;
+		}
+		else
+		{
+			int result = -1;
+			FileArchiveCompressedBlock block;
+
+			switch (compression)
+			{
+				default: case FILEARCHIVE_COMPRESSION_NONE: break;
+				case FILEARCHIVE_COMPRESSION_FASTLZ:
+				{
+					if (size < 16)
+					{
+						break;
+					}
+
+					result = fastlz_compress_level(2, inbuf, size, outbuf);
+					if (result >= size)
+					{
+						result = -1;
+					}	
+				}
+			}
+
+			if (result >= 0)
+			{
+				block.original = size;
+				block.compressed = result;
+
+				if (fwrite(&block, 1, sizeof(block), outp) != sizeof(block))
+				{
+					return COMPRESS_RESULT_ERROR;
+				}
+
+				if (fwrite(outbuf, 1, result, outp) != result)
+				{
+					return COMPRESS_RESULT_ERROR;
+				}
+
+				total += sizeof(block) + result;
+			}
+			else
+			{
+				block.original = size;
+				block.compressed = size | FILEARCHIVE_COMPRESSION_SIZE_IGNORE;
+
+				if (fwrite(&block, 1, sizeof(block), outp) != sizeof(block))
+				{
+					return COMPRESS_RESULT_ERROR;
+				}
+
+				if (fwrite(inbuf, 1, size, outp) != size)
+				{
+					return COMPRESS_RESULT_ERROR;
+				}
+
+				total += sizeof(block) + size;
+			}
+		}
 	}
 
-	return -1;
+	return total;
+}
+
+static uint32_t compressData(FILE* outp, uint32_t compression, CompressCallback callback, void* data, uint32_t blockSize)
+{
+	char* inbuf = malloc(blockSize);
+	char* outbuf = malloc(blockSize * 2);
+
+	uint32_t result = compressStream(outp, compression, inbuf, blockSize, outbuf, blockSize * 2, callback, data);
+
+	free(inbuf);
+	free(outbuf);
+
+	return result;
 }
 
 static int writePadding(FILE* outp, uint32_t size)
@@ -235,25 +332,41 @@ static int writePadding(FILE* outp, uint32_t size)
 		{
 			return -1;
 		}
+		curr += bytesMax;
 	}
 
 	return 0;
 }
 
-static uint32_t writeFiles(FILE* outp, struct FileList* files, int blockAlignment, uint32_t offset)
+struct FileCompressData
+{
+	FILE* inp;
+	uint32_t totalRead;
+};
+
+static uint32_t fileCompressCallback(void* buffer, uint32_t maxLength, void* userData)
+{
+	struct FileCompressData* data = (struct FileCompressData*)userData;
+	int result = fread(buffer, 1, maxLength, data->inp);
+	data->totalRead += result;
+	return result;
+}
+
+static uint32_t writeFiles(FILE* outp, struct FileList* files, uint32_t offset, CommandContext* context)
 {
 	unsigned int i;
 	FILE* inp = NULL;
 
-	int blockSize = 16384;
-	char* input = malloc(blockSize);
-	char* output = malloc(blockSize * 2);
+	size_t dataRead = 0;
+	size_t dataWrite = 0;
+
+	context->data.offset = offset;
 
 	for (i = 0; i < files->count; ++i)
 	{
 		struct FileEntry* entry = &(files->files[i]);
+		struct FileCompressData data;
 		size_t totalRead = 0, totalWritten = 0;
-		size_t blockRead;
 
 		inp = fopen(entry->path, "rb");
 		if (inp == NULL)
@@ -262,113 +375,52 @@ static uint32_t writeFiles(FILE* outp, struct FileList* files, int blockAlignmen
 			break;
 		}
 
-		if ((blockAlignment != 0) && ((offset % blockAlignment) != 0))
+		if (context->blockAlignment != 0)
 		{
-			uint32_t bytes = offset % blockAlignment;
-			uint32_t current = 0;
-
-			memset(input, 0, 1024);
-
-			while (current < bytes)
+			uint32_t bytes = offset % context->blockAlignment;
+			if (writePadding(outp, bytes) < 0)
 			{
-				uint32_t bytesMax = bytes - current > 1024 ? 1024 : bytes-current;
-				if (fwrite(input, 1, bytesMax, outp) != bytesMax)
-				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive.\n", (unsigned int)bytesMax);
-					break;
-				}
-
-				current += bytesMax;
-			}
-
-			if (current != bytes)
-			{
-				fprintf(stderr, "create: Failed writing %u bytes to archive.\n");
+				fprintf(stderr, "create: Failed writing %u bytes to archive.\n", (unsigned int)bytes);
 				break;
 			}
+			offset += bytes;
+			dataWrite += bytes;
 		}
 
-		while (inp && (blockRead = fread(input, 1, blockSize, inp)) > 0)
+		data.inp = inp;
+		data.totalRead = 0;
+
+		totalWritten = compressData(outp, entry->compression, fileCompressCallback, &data, FILEARCHIVE_COMPRESSION_BLOCK_SIZE);
+		if (totalWritten == COMPRESS_RESULT_ERROR)
 		{
-			FileArchiveCompressedBlock block;
-			int result;
-
-			totalRead += blockRead;
-
-			if (entry->compression == FILEARCHIVE_COMPRESSION_NONE)
-			{
-				if (fwrite(input, 1, blockRead, outp) != blockRead)
-				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive\n", (unsigned int)blockRead);
-					fclose(inp);
-					inp = NULL;
-				}
-				totalWritten += blockRead;
-				continue;
-			}
-			
-			result = compress_block(input, blockRead, output, blockSize * 2, entry->compression);
-
-			if (result < 0)
-			{
-				block.compressed = FILEARCHIVE_COMPRESSION_SIZE_IGNORE;
-				if (fwrite(&block, 1, sizeof(block), outp) != sizeof(block))
-				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive\n", (unsigned int)sizeof(block));
-					fclose(inp);
-					inp = NULL;
-					break;
-				}
-
-				if (fwrite(input, 1, blockRead, outp) != blockRead)
-				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive\n", (unsigned int)blockRead);
-					fclose(inp);
-					inp = NULL;
-					break;
-				}
-
-				totalWritten += sizeof(block) + blockRead;
-			}
-			else
-			{
-				block.compressed = (uint16_t)result;
-				if (fwrite(&block, 1, sizeof(block), outp) != sizeof(block))
-				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive\n", (unsigned int)sizeof(block));
-					fclose(inp);
-					inp = NULL;
-					break;
-				}
-
-				if (fwrite(output, 1, block.compressed, outp) != block.compressed)
-				{
-					fprintf(stderr, "create: Failed writing %u bytes to archive\n", (unsigned int)result);
-					fclose(inp);
-					inp = NULL;
-					break;
-				}
-
-				totalWritten += sizeof(block) + result;
-			}
-		}
+			fprintf(stderr, "create: Failed to add \"%s\" to archive.\n", entry->path);
+			break;
+		} 
+		totalRead = data.totalRead;
 
 		entry->offset = offset;
 		entry->size.original = totalRead;
 		entry->size.compressed = totalWritten;
+		entry->blockSize = FILEARCHIVE_COMPRESSION_BLOCK_SIZE;
 		offset += totalWritten;
+
+		dataRead += totalRead;
+		dataWrite += totalWritten;
 
 		if (inp)
 		{
-			fprintf(stderr, "Added file \"%s\" (%u bytes) (as \"%s\", %u bytes), %s\n", entry->path, (unsigned int)totalRead, entry->internalPath, (unsigned int)totalWritten, entry->compression != FILEARCHIVE_COMPRESSION_NONE ? "(compressed)" : "(raw)");
+			if (context->verbose > 0)
+			{
+				fprintf(stderr, "Added file \"%s\" (%u bytes) (as \"%s\", %u bytes), %s\n", entry->path, (unsigned int)totalRead, entry->internalPath, (unsigned int)totalWritten, entry->compression != FILEARCHIVE_COMPRESSION_NONE ? "(compressed)" : "(raw)");
+			}
 
 			fclose(inp);
 			inp = NULL;
 		}
 	}
 
-	free(input);
-	free(output);
+	context->data.size.original = dataRead;
+	context->data.size.compressed = dataWrite;
 
 	if (inp != NULL)
 	{
@@ -384,8 +436,6 @@ static uint32_t findContainer(const char* path, const FileArchiveContainer* root
 	const char* term;
 	uint32_t offset = 0;
 
-	fprintf(stderr, "findContainer - \"%s\"\n", path);
-
 	while ((term = strchr(curr, '/')) != NULL)
 	{
 		size_t nlen = (term-curr);
@@ -394,10 +444,8 @@ static uint32_t findContainer(const char* path, const FileArchiveContainer* root
 
 		for (child = parent->children; child != FILEARCHIVE_INVALID_OFFSET;)
 		{
-			FileArchiveContainer* childContainer = (const FileArchiveContainer*)(((const char*)root) + child);
+			const FileArchiveContainer* childContainer = (const FileArchiveContainer*)(((const char*)root) + child);
 			const char* name = childContainer->name != FILEARCHIVE_INVALID_OFFSET ? stringBuffer + childContainer->name : NULL;
-
-			fprintf(stderr, "Looking at \"%s\"\n", name ? name : "(unnamed)");
 
 			if (name && (strlen(name) == nlen) && !memcmp(name, curr, nlen))
 			{
@@ -416,12 +464,49 @@ static uint32_t findContainer(const char* path, const FileArchiveContainer* root
 		curr = term+1;
 	}
 
-	fprintf(stderr, "Found container at offset %08lx\n", (unsigned int)offset);
-
 	return offset;
 }
 
-static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset, uint32_t blockAlignment)
+static uint32_t relocateOffset(uint32_t offset, uint32_t delta)
+{
+	return offset != FILEARCHIVE_INVALID_OFFSET ? offset + delta : FILEARCHIVE_INVALID_OFFSET;
+}
+
+struct HeaderCompressData
+{
+	struct
+	{
+		const char* begin;
+		const char* end;
+	} blocks[4]; // header, containers, files, strings
+
+	uint32_t totalRead;
+};
+
+uint32_t headerCompressCallback(void* buffer, uint32_t maxLength, void* userData)
+{
+	struct HeaderCompressData* data = (struct HeaderCompressData*)userData; 
+	unsigned int i;
+	size_t written = 0;
+
+	for (i = 0; i < 4; ++i)
+	{
+		size_t size = data->blocks[i].end - data->blocks[i].begin;
+		size_t blockSize = maxLength < size ? maxLength : size;
+
+		memcpy(buffer, data->blocks[i].begin, blockSize);
+
+		data->blocks[i].begin += blockSize;
+		buffer = (((char*)buffer) + blockSize);
+		maxLength -= blockSize;
+		written += blockSize;
+	}
+
+	data->totalRead += written;
+	return written;
+}
+
+static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset, CommandContext* context)
 {
 	size_t containerCapacity = 128, containerCount = 0;
 	FileArchiveContainer* containerEntries = malloc(containerCapacity * sizeof(FileArchiveContainer));
@@ -430,20 +515,29 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 	size_t stringCapacity = 1024, stringSize = 0;
 	char* stringBuffer = malloc(stringCapacity);
 
+	FileArchiveEntry* fileEntries = NULL; 
+	uint32_t fileCount = 0;
+
+	FileArchiveHeader header;
+	struct HeaderCompressData data;
+
+	uint32_t result = 0;
+
+	memset(&data, 0, sizeof(data));
+
 	do
 	{
-		/* block align header */
-
-		if ((blockAlignment != 0) && (offset % blockAlignment != 0))
+		if (context->blockAlignment != 0)
 		{
-			uint32_t bytes = offset % blockAlignment;
-
+			unsigned int bytes = offset % context->blockAlignment;
 			if (writePadding(outp, bytes) < 0)
 			{
-				fprintf(stderr, "create: Failed writing %u bytes to archive.\n", (unsigned int)bytes);
+				fprintf(stderr, "Failed writing %u bytes to archive.\n", bytes);
 				offset = 0;
 				break;
 			}
+
+			offset += bytes;
 		}
 
 		/* construct containers */
@@ -502,8 +596,6 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 					*(stringBuffer + stringSize + nlen -1) = '\0';
 					stringSize += nlen;
 
-					fprintf(stderr, "Added container \"%s\" for path \"%s\"\n", (stringBuffer + container->name), path);
-
 					parentContainer->children = parent = (container - containerEntries) * sizeof(FileArchiveContainer);
 				}
 				else
@@ -518,13 +610,16 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 
 		/* construct files */
 
+		fileEntries = malloc(sizeof(FileArchiveEntry) * files->count);
+		memset(fileEntries, 0, sizeof(FileArchiveEntry) * files->count);
+
 		for (i = 0; i < files->count; ++i)
 		{
 			struct FileEntry* entry = &(files->files[i]);
 			uint32_t offset = findContainer(entry->internalPath, containerEntries, stringBuffer);
 			if (offset == FILEARCHIVE_INVALID_OFFSET)
 			{
-				fprintf(stderr, "create: Failed to resolve container for file \"%s\" while constructing index\n");
+				fprintf(stderr, "create: Failed to resolve container for file \"%s\" while constructing index\n", entry->internalPath);
 				break;
 			}
 
@@ -533,29 +628,162 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 
 		if (i != files->count)
 		{
+			offset = 0;
+			break;
+		}
+
+		for (i = 0; i < containerCount; ++i)
+		{
+			unsigned int j;
+			FileArchiveContainer* container = &(containerEntries[i]);
+			uint32_t containerOffset = ((char*)container - (char*)containerEntries);
+
+			for (j = 0; j < files->count; ++j)
+			{
+				struct FileEntry* source = &(files->files[j]);
+				FileArchiveEntry* file = &(fileEntries[fileCount]);
+				uint32_t fileOffset = ((char*)file - (char*)fileEntries);
+				size_t nlen = strlen(source->filePart) + 1;
+
+				if (source->container != containerOffset)
+				{
+					continue;
+				}
+
+				if (container->files == FILEARCHIVE_INVALID_OFFSET)
+				{
+					container->files = fileOffset;
+				}
+
+				++ container->count;
+
+				file->data = source->offset;
+				file->name = stringSize;
+				file->compression = source->compression;
+				file->size.original = source->size.original;
+				file->size.compressed = source->size.compressed;
+				file->blockSize = source->blockSize;
+
+				if (stringCapacity < (stringSize + nlen))
+				{
+					stringCapacity = stringCapacity * 2 < (stringSize + nlen) ? stringSize + nlen : stringCapacity * 2;
+					stringBuffer = realloc(stringBuffer, stringCapacity);
+				}
+				memcpy(stringBuffer + stringSize, source->filePart, nlen);
+				stringSize += nlen;
+
+				++ fileCount;
+			}
+		}
+
+		if ((i != containerCount) || (fileCount != files->count))
+		{
+			fprintf(stderr, "create: Failed to assign all file entries.\n");
+			offset = 0;
 			break;
 		}
 
 		/* relocate and write blocks */
-	}	
+
+		for (i = 0; i < containerCount; ++i)
+		{
+			FileArchiveContainer* container = &(containerEntries[i]);
+
+			container->parent = relocateOffset(container->parent, sizeof(FileArchiveHeader));
+			container->children = relocateOffset(container->children, sizeof(FileArchiveHeader));
+			container->next = relocateOffset(container->children, sizeof(FileArchiveHeader));
+
+			container->files = relocateOffset(container->files, sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer));
+			container->name = relocateOffset(container->name, sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer) + fileCount * sizeof(FileArchiveEntry));
+		}
+
+		for (i = 0; i < fileCount; ++i)
+		{
+			FileArchiveEntry* file = &(fileEntries[i]);
+
+			file->name = relocateOffset(file->name, sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer) + fileCount * sizeof(FileArchiveEntry));
+		}
+
+		header.cookie = FILEARCHIVE_MAGIC_COOKIE;
+		header.version = FILEARCHIVE_VERSION_CURRENT;
+		header.size = sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer) + fileCount * sizeof(FileArchiveEntry) + stringSize;
+		header.flags = 0;
+
+		header.containers = sizeof(FileArchiveHeader);
+		header.containerCount = containerCount;
+
+		header.files = sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer);
+		header.fileCount = fileCount;
+
+		data.blocks[0].begin = (const void*)&header;
+		data.blocks[0].end = (const void*)(&header + sizeof(header));
+
+		data.blocks[1].begin = (const void*)containerEntries;
+		data.blocks[1].end = (const void*)(containerEntries + containerCount);
+
+		data.blocks[2].begin = (const void*)fileEntries;
+		data.blocks[2].end = (const void*)(fileEntries + fileCount);
+
+		data.blocks[3].begin = (const void*)stringBuffer;
+		data.blocks[3].end = (const void*)(stringBuffer + stringSize);
+
+		result = compressData(outp, context->compression, headerCompressCallback, &data, FILEARCHIVE_COMPRESSION_BLOCK_SIZE); 
+		if (result == COMPRESS_RESULT_ERROR)
+		{
+			fprintf(stderr, "create: Failed writing header to archive.\n");
+			offset = 0;
+			break;
+		}
+
+		context->header.offset = offset;
+		context->header.size.original = data.totalRead;
+		context->header.size.compressed = result;
+		offset += result;
+	}
 	while (0);
 
+	free(fileEntries);
 	free(containerEntries);
 	free(stringBuffer);
 
 	return offset;
 }
 
+uint32_t writeFooter(FILE* outp, uint32_t offset, CommandContext* context)
+{
+	FileArchiveFooter footer;
+
+	footer.cookie = FILEARCHIVE_MAGIC_COOKIE;
+	footer.header = offset - context->header.offset;
+	footer.data = offset;
+	footer.compression = context->compression;
+	footer.size.original = context->header.size.original;
+	footer.size.compressed = context->header.size.compressed;
+
+	if (fwrite(&footer, 1, sizeof(footer), outp) != sizeof(footer))
+	{
+		fprintf(stderr, "create: Failed to write %u bytes to archive.\n", (unsigned int)sizeof(footer));
+		return 0;
+	}
+
+	context->footer.offset = offset;
+	context->footer.size.original = context->footer.size.compressed = sizeof(footer);
+
+	return offset + sizeof(footer);
+} 
+
 int commandCreate(int argc, char* argv[])
 {
-	int i;
+	int i, result;
 	State state = State_Options;
-	int compression = FILEARCHIVE_COMPRESSION_NONE;
-	int blockAlignment = 0;
 	struct FileList files = { 0 };
 	const char* archive = NULL;
 	FILE* archp = NULL;
+
 	uint32_t offset = 0;
+	CommandContext context = { 0 };
+	context.compression = FILEARCHIVE_COMPRESSION_NONE;
+	context.blockAlignment = 0;
 
 	for (i = 2; i < argc; ++i)
 	{
@@ -581,11 +809,11 @@ int commandCreate(int argc, char* argv[])
 
 					if (!strcmp("fastlz", argv[i]))
 					{
-						compression = FILEARCHIVE_COMPRESSION_FASTLZ;
+						context.compression = FILEARCHIVE_COMPRESSION_FASTLZ;
 					}
 					else if (!strcmp("none", argv[i]))
 					{
-						compression = FILEARCHIVE_COMPRESSION_NONE;
+						context.compression = FILEARCHIVE_COMPRESSION_NONE;
 					}
 					else
 					{
@@ -593,9 +821,13 @@ int commandCreate(int argc, char* argv[])
 						return -1;
 					}
 				}
+				else if (!strcmp("-v", argv[i]))
+				{
+					context.verbose = 1;
+				}
 				else if (!strcmp("-s", argv[i]))
 				{
-					blockAlignment = 2048;
+					context.blockAlignment = 2048;
 				}
 				else
 				{
@@ -630,7 +862,7 @@ int commandCreate(int argc, char* argv[])
 					internalPath = sep2+1;
 				}
 #endif
-				if (addFile(&files, argv[i], internalPath, compression) < 0)
+				if (addFile(&files, argv[i], internalPath, context.compression) < 0)
 				{
 					fprintf(stderr, "create: Failed adding file \"%s\"\n", argv[i]);
 					freeFiles(&files);
@@ -641,45 +873,57 @@ int commandCreate(int argc, char* argv[])
 		}
 	}
 
-	if (state != State_Files)
+	result = -1;
+	do
 	{
-		fprintf(stderr, "create: Too few arguments\n");
-		freeFiles(&files);
-		return -1;
-	}
+		if (state != State_Files)
+		{
+			fprintf(stderr, "create: Too few arguments\n");
+			break;
+		}
 
-	if (files.count == 0)
-	{
-		fprintf(stderr, "create: No files available for use\n");
-		freeFiles(&files);
-		return -1;
-	}
+		if (files.count == 0)
+		{
+			fprintf(stderr, "create: No files available for use\n");
+			break;
+		}
 
-	archp = fopen(archive, "wb");
-	if (archp == NULL)
-	{
-		fprintf(stderr, "create: Could not open archive \"%s\" for writing\n", archive);
-		freeFiles(&files);
-		return -1;
-	}
+		archp = fopen(archive, "wb");
+		if (archp == NULL)
+		{
+			fprintf(stderr, "create: Could not open archive \"%s\" for writing\n", archive);
+			break;
+		}
 
-	if ((offset = writeFiles(archp, &files, blockAlignment, offset)) == 0)
-	{
-		fprintf(stderr, "create: Failed writing files to archive\n");
-		fclose(archp);
-		freeFiles(&files);
-		return -1;
-	}
+		if ((offset = writeFiles(archp, &files, offset, &context)) == 0)
+		{
+			fprintf(stderr, "create: Failed writing files to archive\n");
+			break;
+		}
 
-	if ((offset = writeHeader(archp, &files, blockAlignment, offset)) == 0)
-	{
-		fprintf(stderr, "create: Failed writing header to archive\n");
-		fclose(archp);
-		freeFiles(&files);
-		return -1;
+		if ((offset = writeHeader(archp, &files, offset, &context)) == 0)
+		{
+			fprintf(stderr, "create: Failed writing header to archive\n");
+			break;
+		}
+
+		if ((offset = writeFooter(archp, offset, &context)) == 0)
+		{
+			fprintf(stderr, "create: Failed writing footer to archive\n");
+			break;
+		}
+
+		fprintf(stderr, "Archive \"%s\" created successfully. Statistics: \n", archive);
+		fprintf(stderr, "   Data block: %u bytes, %u bytes uncompressed (ratio: %.2f%%)\n", context.data.size.compressed, context.data.size.original, (1.0f-((float)context.data.size.compressed / (float)context.data.size.original)) * 100.0f);
+		fprintf(stderr, "   Header block: %u bytes, %u bytes uncompressed (ratio: %.2f%%)\n", context.header.size.compressed, context.header.size.original, (1.0f-((float)context.header.size.compressed / (float)context.header.size.original)) * 100.0f);
+		fprintf(stderr, "   Footer block: %u bytes\n", context.footer.size.original);
+
+		result = 0;
 	}
+	while (0);
 
 	fclose(archp);
 	freeFiles(&files);
-	return 0;
+
+	return result;
 }
