@@ -133,7 +133,7 @@ static int listArchive(const char* path)
 			break;
 		}
 
-		if (fseek(inp, -(sizeof(FileArchiveFooter) + footer.header), SEEK_END) < 0)
+		if (fseek(inp, -(sizeof(FileArchiveFooter) + footer.toc), SEEK_END) < 0)
 		{
 			fprintf(stderr, "dir: Could not seek to TOC\n");
 			break;

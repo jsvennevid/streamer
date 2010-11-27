@@ -759,7 +759,7 @@ uint32_t writeFooter(FILE* outp, uint32_t offset, CommandContext* context)
 	FileArchiveFooter footer;
 
 	footer.cookie = FILEARCHIVE_MAGIC_COOKIE;
-	footer.header = offset - context->header.offset;
+	footer.toc = offset - context->header.offset;
 	footer.data = offset - context->data.offset;
 	footer.compression = context->compression;
 	footer.size.original = context->header.size.original;

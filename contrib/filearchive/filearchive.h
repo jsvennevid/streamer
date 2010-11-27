@@ -47,7 +47,7 @@ struct FileArchiveHeader
 {
 	uint32_t cookie;		// Magic cookie
 	uint32_t version;		// Version of archive
-	uint32_t size;			// Size of header TOC
+	uint32_t size;			// Size of TOC
 	uint32_t flags;			// Flags
 
 	// Version 1
@@ -62,15 +62,15 @@ struct FileArchiveHeader
 struct FileArchiveFooter
 {
 	uint32_t cookie;		// Magic cookie
-	uint32_t header;		// Offset to header (relative to beginning of footer)
+	uint32_t toc;			// Offset to TOC (relative to beginning of footer)
 	uint32_t data;			// Offset to data (relative to beginning of footer)
 
 	uint32_t compression;		// Compression used on header
 
 	struct
 	{
-		uint32_t original;	// Header size, uncompressed
-		uint32_t compressed;	// Header size, compressed
+		uint32_t original;	// TOC size, uncompressed
+		uint32_t compressed;	// TOC size, compressed
 	} size;
 };
 
