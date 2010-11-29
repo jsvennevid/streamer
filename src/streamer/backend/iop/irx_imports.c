@@ -85,6 +85,7 @@ I_tolower
 I_strcpy
 I_memcpy
 I_memset
+I_memcmp
 I_strcat
 I_strncpy
 I_strlen

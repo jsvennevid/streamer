@@ -26,7 +26,7 @@ SOFTWARE.
 #include "rpc.h"
 
 #include "../drivers/driver.h"
-#include "../drivers/io.h"
+#include "../../io.h"
 
 #include <errno.h>
 

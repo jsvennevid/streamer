@@ -1,7 +1,14 @@
 #ifndef STREAMER_CONTRIB_FILEARCHIVE_H
 #define STREAMER_CONTRIB_FILEARCHIVE_H
 
+#if defined(_IOP)
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
+typedef int int32_t;
+#else
 #include <stdint.h>
+#endif
 
 typedef struct FileArchiveContainer FileArchiveContainer;
 typedef struct FileArchiveEntry FileArchiveEntry;

@@ -26,7 +26,7 @@ SOFTWARE.
 
 #define STREAMER_RPCID_IOP	0x54424c01
 
-#include "../drivers/io.h"
+#include "../../io.h"
 
 typedef enum
 {
