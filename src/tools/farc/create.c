@@ -15,6 +15,8 @@
 #include <sys/stat.h>
 #endif
 
+#include <ctype.h>
+
 #if defined(__APPLE__)
 #include <sys/syslimits.h>
 #endif
@@ -84,10 +86,10 @@ static int addFile(struct FileList* files, const char* path, const char* interna
 	struct FileEntry* entry;
 #if defined(_WIN32)
 	DWORD attrs;
-	char* curr;
 #else
 	struct stat fs;
 #endif
+	char* curr;
 
 	if ('@' == *path)
 	{
@@ -195,16 +197,16 @@ static int addFile(struct FileList* files, const char* path, const char* interna
 	entry->internalPath = strdup(internalPath);
 	entry->container = FILEARCHIVE_INVALID_OFFSET;
 
-#if defined(_WIN32)
 	for (curr = entry->internalPath; *curr; ++curr)
 	{
+#if defined(_WIN32)
 		if (*curr == '\\')
 		{
 			*curr = '/';
 		}
+#endif
 		*curr = (char)tolower(*curr);
 	}
-#endif
 
 	entry->filePart = (strrchr(entry->internalPath, '/') != NULL) ? strrchr(entry->internalPath, '/') + 1 : entry->internalPath;
 
