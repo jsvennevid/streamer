@@ -24,9 +24,7 @@ SOFTWARE.
 #define _CRT_SECURE_NO_WARNINGS
 
 #include "filearchive.h"
-#if defined(STREAMER_FILEARCHIVE_SUPPORT_FASTLZ)
 #include <fastlz/fastlz.h>
-#endif
 
 
 #if defined(_IOP)
@@ -41,120 +39,79 @@ SOFTWARE.
 #define FILEARCHIVE_CACHE_SIZE (128 * 1024)
 #define FILEARCHIVE_BUFFER_SIZE (16 * 1024)
 
-#define FILEARCHIVE_MAX_CONTAINERS (64)
+static void FileArchive_Destroy(struct IODriver* driver);
+static int FileArchive_Open(struct IODriver* driver, const char* filename, StreamerOpenMode mode);
+static int FileArchive_Close(struct IODriver* driver, int fd);
+static int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int length);
+static int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, StreamerSeekMode whence);
 
-#define FILEARCHIVE_STATIC_MEMORY_SIZE (FILEARCHIVE_MAX_HANDLES * FILEARCHIVE_BUFFER_SIZE + FILEARCHIVE_CACHE_SIZE)
+static int FileArchive_LoadHeader(FileArchiveDriver* driver);
+static int FileArchive_LocateHeader(FileArchiveDriver* driver);
 
-#define FILEARCHIVE_HEADER_SIGNATURE (('Z' << 24) | ('F' << 16) | ('A' << 8) | ('R'))
-#define FILEARCHIVE_TAIL_SIGNATURE (('Z' << 24) | ('T' << 16) | ('A' << 8) | ('I'))
-
-#define FILEARCHIVE_COMPRESSION_UNCOMPRESSED (0)
-#define FILEARCHIVE_COMPRESSION_FASTLZ (('F' << 24) | ('L' << 16) | ('Z' << 8) | ('0'))
-
-#define FILEARCHIVE_COMPRESSION_SIZE_IGNORE 0x8000
-#define FILEARCHIVE_COMPRESSION_SIZE_MASK 0x7fff
-
-void FileArchive_Destroy(struct IODriver* driver);
-int FileArchive_Open(struct IODriver* driver, const char* filename, StreamerOpenMode mode);
-int FileArchive_Close(struct IODriver* driver, int fd);
-int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int length);
-int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, StreamerSeekMode whence);
-
-int FileArchive_LoadHeader(FileArchiveDriver* driver);
-int FileArchive_LocateHeader(FileArchiveDriver* driver);
-int FileArchive_ParseHeader(FileArchiveDriver* driver, const void* header, int length);
-int FileArchive_ParseEntry(FileArchiveDriver* driver, const void* entry, int length);
-
-FileArchiveContainer* FileArchive_FindContainer(FileArchiveContainer* curr, const char* begin, const char* end);
-int FileArchive_FillCache(FileArchiveDriver* driver, FileArchiveHandle* handle, FileArchiveEntry* file, int minFill);
+static int FileArchive_FillCache(FileArchiveDriver* driver, FileArchiveHandle* handle, const FileArchiveEntry* file, int minFill);
 
 IODriver* FileArchive_Create(IODriver* native, const char* file)
 {
 	int i;
 #if defined(_IOP)
-	FileArchiveDriver* driver = AllocSysMemory(ALLOC_FIRST, sizeof(FileArchiveDriver), 0);
+	uint8_t* buffer = AllocSysMemory(ALLOC_FIRST, sizeof(FileArchiveDriver) + FILEARCHIVE_MAX_HANDLES * FILEARCHIVE_BUFFER_SIZE + FILEARCHIVE_CACHE_SIZE, 0);
 #else
-	FileArchiveDriver* driver = malloc(sizeof(FileArchiveDriver));
+	uint8_t* buffer = malloc(sizeof(FileArchiveDriver) + FILEARCHIVE_MAX_HANDLES * FILEARCHIVE_BUFFER_SIZE + FILEARCHIVE_CACHE_SIZE);
 #endif
+	FileArchiveDriver* driver = (FileArchiveDriver*)buffer;
+	buffer += sizeof(FileArchiveDriver);
+
 	memset(driver, 0, sizeof(FileArchiveDriver));
 
-	driver->m_interface.destroy = FileArchive_Destroy;
-	driver->m_interface.open = FileArchive_Open;
-	driver->m_interface.close = FileArchive_Close;
-	driver->m_interface.read = FileArchive_Read;
-	driver->m_interface.lseek = FileArchive_LSeek;
+	driver->interface.destroy = FileArchive_Destroy;
+	driver->interface.open = FileArchive_Open;
+	driver->interface.close = FileArchive_Close;
+	driver->interface.read = FileArchive_Read;
+	driver->interface.lseek = FileArchive_LSeek;
 
 	if (native->align && native->align(native) > 0)
 	{
 		STREAMER_PRINTF(("FileArchive: Cannot handle pre-aligned I/O\n"));
-		FileArchive_Destroy(&(driver->m_interface));
+		FileArchive_Destroy(&(driver->interface));
 		return 0;
 	}
 
-	driver->m_native.m_fd = native->open(native, file, StreamerOpenMode_Read);
-	if (driver->m_native.m_fd < 0)
+	driver->native.fd = native->open(native, file, StreamerOpenMode_Read);
+	if (driver->native.fd < 0)
 	{
 		STREAMER_PRINTF(("FileArchive: Could not open native file '%s'\n", file));
-		FileArchive_Destroy(&(driver->m_interface));
+		FileArchive_Destroy(&(driver->interface));
 		return 0;
 	}
-	driver->m_native.m_driver = native;
+	driver->native.driver = native;
 
-#if defined(_IOP)
-	driver->m_static = AllocSysMemory(ALLOC_FIRST, FILEARCHIVE_STATIC_MEMORY_SIZE, 0);
-#else
-	driver->m_static = malloc(FILEARCHIVE_STATIC_MEMORY_SIZE);
-#endif
-	if (!driver->m_static)
-	{
-		STREAMER_PRINTF(("FileArchive: Failed allocating %d bytes for cache and buffers\n", FILEARCHIVE_STATIC_MEMORY_SIZE));
-		FileArchive_Destroy(&(driver->m_interface));
-	}
-
-	driver->m_cache = driver->m_static + FILEARCHIVE_MAX_HANDLES * FILEARCHIVE_BUFFER_SIZE;
 	for (i = 0; i < FILEARCHIVE_MAX_HANDLES; ++i)
 	{
-		driver->m_handles[i].m_buffer = driver->m_static + i * FILEARCHIVE_BUFFER_SIZE;
+		driver->handles[i].buffer.data = buffer;
+		buffer += FILEARCHIVE_BUFFER_SIZE;
 	}
+	driver->cache.data = buffer;
 
 	if (FileArchive_LoadHeader(driver) < 0)
 	{
 		STREAMER_PRINTF(("FileArchive: Could not load header\n"));
-		FileArchive_Destroy(&(driver->m_interface));
+		FileArchive_Destroy(&(driver->interface));
 		return 0;
 	}
 
 	STREAMER_PRINTF(("FileArchive: Driver created\n"));
 
-	driver->m_cacheOwner = -1;
-	return &(driver->m_interface);
+	driver->cache.owner = -1;
+	return &(driver->interface);
 }
 
-void FileArchive_Destroy(struct IODriver* driver)
+static void FileArchive_Destroy(struct IODriver* driver)
 {
 	FileArchiveDriver* local = (FileArchiveDriver*)driver;
 
-	if (local->m_dynamic)
+	if (local->native.driver && (local->native.fd >= 0))
 	{
-#if defined(_IOP)
-		FreeSysMemory(local->m_dynamic);
-#else
-		free(local->m_dynamic);
-#endif
-	}
-
-	if (local->m_static)
-	{
-#if defined(_IOP)
-		FreeSysMemory(local->m_static);
-#else
-		free(local->m_static);
-#endif
-	}
-
-	if (local->m_native.m_driver && (local->m_native.m_fd >= 0))
-	{
-		local->m_native.m_driver->close(local->m_native.m_driver, local->m_native.m_fd);
+		local->native.driver->close(local->native.driver, local->native.fd);
 	}
 
 #if defined(_IOP)
@@ -166,15 +123,21 @@ void FileArchive_Destroy(struct IODriver* driver)
 	STREAMER_PRINTF(("FileArchive: Driver destroyed\n"));
 }
 
-int FileArchive_Open(struct IODriver* driver, const char* filename, StreamerOpenMode mode)
+static int FileArchive_Open(struct IODriver* driver, const char* filename, StreamerOpenMode mode)
 {
 	const char* begin, * end;
 	FileArchiveDriver* local = (FileArchiveDriver*)driver;
-	FileArchiveContainer* container = &(local->m_root);
-	FileArchiveEntry* entry,* candidate;
-	int i;
+	const FileArchiveContainer* container;
+	const FileArchiveEntry* entry;
+	int i,n;
 
 	STREAMER_PRINTF(("FileArchive: open(\"%s\", %d)\n", filename, mode));
+
+	if (local->toc == NULL)
+	{
+		STREAMER_PRINTF(("FileArchive: Archive TOC not available\n"));
+		return -1;
+	}
 
 	if (mode != StreamerOpenMode_Read)
 	{
@@ -185,8 +148,10 @@ int FileArchive_Open(struct IODriver* driver, const char* filename, StreamerOpen
 	begin = filename;
 	end = filename + strlen(filename);
 
+	container = (const FileArchiveContainer*)(((const char*)local->toc) + local->toc->containers);
 	do
 	{
+		uint32_t offset;
 		const char* curr = begin;
 		while ((curr != end) && (*curr != '/'))
 		{
@@ -198,10 +163,27 @@ int FileArchive_Open(struct IODriver* driver, const char* filename, StreamerOpen
 			break;
 		}
 
-		container = FileArchive_FindContainer(container, begin, curr);
-		if (!container)
+		for (offset = container->children; offset != FILEARCHIVE_INVALID_OFFSET; offset = container->next)		
 		{
-			STREAMER_PRINTF(("FileArchive: Could not locate folder for '%s'\n", filename));
+			const char* name;
+
+			container = (const FileArchiveContainer*)(((const char*)local->toc) + offset);
+			name = container->name != FILEARCHIVE_INVALID_OFFSET ? ((const char*)local->toc) + container->name : "";
+
+			if (strlen(name) != (size_t)(curr-begin))
+			{
+				continue;
+			}
+
+			if (!memcmp(name, begin, (curr-begin)))
+			{
+				break;
+			}
+		}
+
+		if (offset == FILEARCHIVE_INVALID_OFFSET)
+		{
+			STREAMER_PRINTF(("FileArchive: Could not locate container for '%s'\n", filename));
 			return -1;
 		}
 
@@ -215,27 +197,22 @@ int FileArchive_Open(struct IODriver* driver, const char* filename, StreamerOpen
 		return -1;
 	}
 
-	for (entry = 0, candidate = container->m_files; candidate; candidate = candidate->m_next)
+	entry = (const FileArchiveEntry*)(((const char*)local->toc) + container->files);
+	for (i = 0, n = container->count; i < n; ++i, ++entry)
 	{
-		const char* a,* b;
-
-		if (strlen(candidate->m_name) != (size_t)(end-begin))
+		const char* name = entry->name != FILEARCHIVE_INVALID_OFFSET ? ((const char*)local->toc) + entry->name : "";
+		if (strlen(name) != (size_t)(end - begin))
 		{
 			continue;
 		}
 
-		for (a = candidate->m_name, b = begin; (tolower(*a) == tolower(*b)) && (b != end); ++a, ++b);
-
-		if (b != end)
+		if (!memcmp(name, begin, end-begin))
 		{
-			continue;
+			break;
 		}
-
-		entry = candidate;
-		break;
 	}
 
-	if (!entry)
+	if (i == n)
 	{
 		STREAMER_PRINTF(("FileArchive: Could not find file '%s'\n", filename));
 		return -1;
@@ -243,20 +220,20 @@ int FileArchive_Open(struct IODriver* driver, const char* filename, StreamerOpen
 
 	for (i = 0; i < FILEARCHIVE_MAX_HANDLES; ++i)
 	{
-		FileArchiveHandle* handle = &(local->m_handles[i]);
+		FileArchiveHandle* handle = &(local->handles[i]);
 
-		if (handle->m_file)
+		if (handle->file)
 		{
 			continue;
 		}
 
-		handle->m_file = entry;
+		handle->file = entry;
 
-		handle->m_offset = 0;
-		handle->m_compressedOffset = 0;
+		handle->offset.original = 0;
+		handle->offset.compressed = 0;
 
-		handle->m_bufferOffset = 0;
-		handle->m_bufferFill = 0;
+		handle->buffer.offset = 0;
+		handle->buffer.fill = 0;
 
 		return i;
 	}
@@ -265,7 +242,7 @@ int FileArchive_Open(struct IODriver* driver, const char* filename, StreamerOpen
 	return -1;
 }
 
-int FileArchive_Close(struct IODriver* driver, int fd)
+static int FileArchive_Close(struct IODriver* driver, int fd)
 {
 	FileArchiveDriver* local = (FileArchiveDriver*)driver;
 
@@ -277,26 +254,26 @@ int FileArchive_Close(struct IODriver* driver, int fd)
 		return -1;
 	}
 
-	if (!local->m_handles[fd].m_file)
+	if (!local->handles[fd].file)
 	{
 		STREAMER_PRINTF(("FileArchive: File not opened\n"));
 		return -1;
 	}
 
-	if (local->m_cacheOwner == fd)
+	if (local->cache.owner == fd)
 	{
-		local->m_cacheOwner = -1;
+		local->cache.owner = -1;
 	}
 
-	local->m_handles[fd].m_file = 0;
+	local->handles[fd].file = 0;
 	return 0;
 }
 
-int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int length)
+static int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int length)
 {
 	FileArchiveDriver* local = (FileArchiveDriver*)driver;
 	FileArchiveHandle* handle;
-	FileArchiveEntry* file;
+	const FileArchiveEntry* file;
 	int compression;
 
 	if ((fd < 0) || (fd >= FILEARCHIVE_MAX_HANDLES))
@@ -305,106 +282,103 @@ int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int
 		return -1;
 	}
 
-	handle = &(local->m_handles[fd]);
-	file = handle->m_file;
+	handle = &(local->handles[fd]);
+	file = handle->file;
 	if (!file)
 	{
 		STREAMER_PRINTF(("FileArchive: File handle not opened\n"));
 		return -1;
 	}
 
-	compression = handle->m_file->m_compression;
-	if (compression == FILEARCHIVE_COMPRESSION_UNCOMPRESSED)
+	compression = handle->file->compression;
+	if (compression == FILEARCHIVE_COMPRESSION_NONE)
 	{
-		int maxRead = (file->m_originalSize - handle->m_offset) < length ? (file->m_originalSize - handle->m_offset) : length;
+		int maxRead = (file->size.original - handle->offset.original) < length ? (file->size.original - handle->offset.original) : length;
 		int result;
 
-		result = local->m_native.m_driver->lseek(local->m_native.m_driver, local->m_native.m_fd, local->m_base + file->m_offset + handle->m_offset, StreamerSeekMode_Set);
+		result = local->native.driver->lseek(local->native.driver, local->native.fd, local->base + file->data + handle->offset.original, StreamerSeekMode_Set);
 		if (result < 0)
 		{
 			STREAMER_PRINTF(("FileArchive: Failed seeking to uncompressed location (%d)\n", result));
 			return result;
 		}
 
-		result = local->m_native.m_driver->read(local->m_native.m_driver, local->m_native.m_fd, buffer, maxRead);
+		result = local->native.driver->read(local->native.driver, local->native.fd, buffer, maxRead);
 		if (result != maxRead)
 		{
 			STREAMER_PRINTF(("FileArchive: Failed reading %d uncompressed bytes from archive (%d)\n", maxRead, result));
 			return -1;
 		}
 
-		handle->m_offset += result;
+		handle->offset.original += result;
 		return result;
 	}
 	else
 	{
 		int actual = 0;
 
-		if (local->m_cacheOwner != fd)
+		if (local->cache.owner != fd)
 		{
-			local->m_cacheOffset = 0;
-			local->m_cacheFill = 0;
-			local->m_cacheOwner = fd;
+			local->cache.offset = 0;
+			local->cache.fill = 0;
+			local->cache.owner = fd;
 		}
 
-		length = length < (unsigned int)(file->m_originalSize - handle->m_offset) ? length : (file->m_originalSize - handle->m_offset);
+		length = length < (unsigned int)(file->size.original - handle->offset.original) ? length : (file->size.original - handle->offset.original);
 		while (length > 0)
 		{
 			int maxRead, bufferRead;
 
-			if (handle->m_bufferFill == handle->m_bufferOffset)
+			if (handle->buffer.fill == handle->buffer.offset)
 			{
-				unsigned short originalSize, compressedSize, cacheUsage;
+				FileArchiveCompressedBlock block;
+				uint32_t cacheUsage;
 
-				if (FileArchive_FillCache(local, handle, file, sizeof(unsigned short)*2) < 0)
+				if (FileArchive_FillCache(local, handle, file, sizeof(FileArchiveCompressedBlock)) < 0)
 				{
 					STREAMER_PRINTF(("FileArchive: Error while filling compression cache\n"));
 					return -1;
 				}
 
-				memcpy(&originalSize, local->m_cache + local->m_cacheOffset, sizeof(originalSize));
-				memcpy(&compressedSize, local->m_cache + local->m_cacheOffset + 2, sizeof(compressedSize));
+				memcpy(&block, local->cache.data + local->cache.offset, sizeof(FileArchiveCompressedBlock));
 
-				if (originalSize > FILEARCHIVE_BUFFER_SIZE)
+				if (block.original > FILEARCHIVE_BUFFER_SIZE)
 				{
-					STREAMER_PRINTF(("FileArchive: Decompressed block too large (max: %d, was: %d)\n", FILEARCHIVE_BUFFER_SIZE, originalSize));
+					STREAMER_PRINTF(("FileArchive: Decompressed block too large (max: %d, was: %d)\n", FILEARCHIVE_BUFFER_SIZE, block.original));
 					return -1;
 				}
 
-				if (FileArchive_FillCache(local, handle, file, sizeof(unsigned short)*2 + (compressedSize & FILEARCHIVE_COMPRESSION_SIZE_MASK)) < 0)
+				if (FileArchive_FillCache(local, handle, file, sizeof(unsigned short)*2 + (block.compressed & FILEARCHIVE_COMPRESSION_SIZE_MASK)) < 0)
 				{
 					STREAMER_PRINTF(("FileArchive: Error while filling compression cache\n"));
 					return -1;
 				}
 
-				if (compressedSize & FILEARCHIVE_COMPRESSION_SIZE_IGNORE)
+				if (block.compressed & FILEARCHIVE_COMPRESSION_SIZE_IGNORE)
 				{
-					compressedSize &= FILEARCHIVE_COMPRESSION_SIZE_MASK;
-
-					if (compressedSize != originalSize)
+					if ((block.compressed & FILEARCHIVE_COMPRESSION_SIZE_MASK) != block.original)
 					{
 						STREAMER_PRINTF(("FileArchive: Uncompressed block size mismatch\n"));
 						return -1;
 					}
 
-					memcpy(handle->m_buffer, local->m_cache + local->m_cacheOffset + sizeof(unsigned short)*2, compressedSize);
+					memcpy(handle->buffer.data, local->cache.data + local->cache.offset + sizeof(FileArchiveCompressedBlock), block.original);
 				}
 				else
 				{
 					switch (compression)
 					{
-#if defined(STREAMER_FILEARCHIVE_SUPPORT_FASTLZ)
 						case FILEARCHIVE_COMPRESSION_FASTLZ:
 						{
-							int result = fastlz_decompress(local->m_cache + local->m_cacheOffset + sizeof(unsigned short) * 2, compressedSize, handle->m_buffer, FILEARCHIVE_BUFFER_SIZE);
-							if (result != originalSize)
+							int result = fastlz_decompress(local->cache.data + local->cache.offset + sizeof(FileArchiveCompressedBlock), block.compressed, handle->buffer.data, FILEARCHIVE_BUFFER_SIZE);
+							if (result != block.original)
 							{
 								STREAMER_PRINTF(("FileArchive: Failed to decompress fastlz block\n"));
 								return -1;
 							}
 						}
 						break;
-#endif
+
 						default:
 						{
 							STREAMER_PRINTF(("FileArchive: Unsupported compression scheme\n"));
@@ -414,15 +388,15 @@ int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int
 					}
 				}
 
-				cacheUsage = compressedSize + sizeof(unsigned short)*2;
-				handle->m_compressedOffset += cacheUsage;
-				local->m_cacheOffset += cacheUsage;
+				cacheUsage = (block.compressed & FILEARCHIVE_COMPRESSION_SIZE_MASK) + sizeof(FileArchiveCompressedBlock);
+				handle->offset.compressed += cacheUsage;
+				local->cache.offset += cacheUsage;
 
-				handle->m_bufferOffset = 0;
-				handle->m_bufferFill = originalSize;
+				handle->buffer.offset = 0;
+				handle->buffer.fill = block.original;
 			}
 
-			bufferRead = handle->m_bufferFill - handle->m_bufferOffset;
+			bufferRead = handle->buffer.fill - handle->buffer.offset;
 			maxRead = (unsigned int)bufferRead > length ? length : bufferRead;
 
 			if (!maxRead)
@@ -430,25 +404,25 @@ int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int
 				break;
 			}
 
-			memcpy(buffer, handle->m_buffer + handle->m_bufferOffset, maxRead);
+			memcpy(buffer, handle->buffer.data + handle->buffer.offset, maxRead);
 
 			buffer = ((char*)buffer) + maxRead;
 			length -= maxRead;
 			actual += maxRead;
 
-			handle->m_bufferOffset += maxRead;
-			handle->m_offset += maxRead;
+			handle->buffer.offset += maxRead;
+			handle->offset.original += maxRead;
 		}
 
 		return actual;
 	}
 }
 
-int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, StreamerSeekMode whence)
+static int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, StreamerSeekMode whence)
 {
 	FileArchiveDriver* local = (FileArchiveDriver*)driver;
 	FileArchiveHandle* handle;
-	FileArchiveEntry* file;
+	const FileArchiveEntry* file;
 	int newOffset = 0;
 
 	STREAMER_PRINTF(("FileArchive: lseek(%d, %d, %d)\n", fd, offset, whence));
@@ -459,50 +433,52 @@ int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, StreamerSeekM
 		return -1;
 	}
 
-	handle = &(local->m_handles[fd]);
-	file = handle->m_file;
+	handle = &(local->handles[fd]);
+	file = handle->file;
 	if (!file)
 	{
 		STREAMER_PRINTF(("FileArchive: File handle not opened\n"));
 		return -1;
 	}
 
-	if (file->m_compression == FILEARCHIVE_COMPRESSION_UNCOMPRESSED)
+	if (file->compression == FILEARCHIVE_COMPRESSION_NONE)
 	{
 		switch (whence)
 		{
 			case StreamerSeekMode_Set: newOffset = offset; break;
-			case StreamerSeekMode_Current: newOffset = handle->m_offset + offset; break;
-			case StreamerSeekMode_End: newOffset = file->m_originalSize + offset; break;
+			case StreamerSeekMode_Current: newOffset = handle->offset.original + offset; break;
+			case StreamerSeekMode_End: newOffset = file->size.original + offset; break;
 		}
 
-		if ((newOffset < 0) || (newOffset > (int)file->m_originalSize))
+		if ((newOffset < 0) || (newOffset > (int)file->size.original))
 		{
 			STREAMER_PRINTF(("FileArchive: Seeking out of bounds\n"));
 			return -1;
 		}
 
-		handle->m_offset = newOffset;
+		handle->offset.original = newOffset;
 	}
 	else
 	{
+		// TODO: since compression is block-based, we can do seeking (although it'll be somewhat expensive) - investigate
+
 		if (offset != 0)
 		{
 			STREAMER_PRINTF(("FileArchive: Can only seek to beginning or end of compressed files\n"));
 			return -1;
 		}
 
-		if (fd == local->m_cacheOwner)
+		if (fd == local->cache.owner)
 		{
-			local->m_cacheOwner = -1;
+			local->cache.owner = -1;
 		}
 
 		switch (whence)
 		{
 			case StreamerSeekMode_Set:
 			{
-				handle->m_offset = 0;
-				handle->m_compressedOffset = 0;
+				handle->offset.original = 0;
+				handle->offset.compressed = 0;
 			}
 			break;
 
@@ -515,21 +491,24 @@ int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, StreamerSeekM
 
 			case StreamerSeekMode_End:
 			{
-				handle->m_offset = file->m_originalSize;
-				handle->m_compressedOffset = file->m_compressedSize;
+				handle->offset.original = file->size.original;
+				handle->offset.compressed = file->size.compressed;
 			}
 			break;
 		}
 
-		handle->m_bufferOffset = 0;
-		handle->m_bufferFill = 0;
+		handle->buffer.offset = 0;
+		handle->buffer.fill = 0;
 	}
 
-	return handle->m_offset;
+	return handle->offset.original;
 }
 
-int FileArchive_LoadHeader(FileArchiveDriver* driver)
+static int FileArchive_LoadHeader(FileArchiveDriver* driver)
 {
+	STREAMER_PRINTF(("FileArchive: Loading header not re-implemented\n"));
+	return -1;
+/*
 	int location, ret, size, entries;
 	const unsigned char* curr;
 
@@ -629,10 +608,14 @@ int FileArchive_LoadHeader(FileArchiveDriver* driver)
 	}
 
 	return 0;
+*/
 }
 
-int FileArchive_LocateHeader(FileArchiveDriver* driver)
+static int FileArchive_LocateHeader(FileArchiveDriver* driver)
 {
+	STREAMER_PRINTF(("FileArchive: LocateHeader not re-implemented\n"));
+	return -1;
+/*
 	int eof, target, offset, ret, location;
 
 	eof = driver->m_native.m_driver->lseek(driver->m_native.m_driver, driver->m_native.m_fd, 0, StreamerSeekMode_End);
@@ -682,178 +665,12 @@ int FileArchive_LocateHeader(FileArchiveDriver* driver)
 	location = eof - ((eof - target) - (offset - 4)) - location;
 
 	return location;
+*/
 }
 
-int FileArchive_ParseHeader(FileArchiveDriver* driver, const void* header, int length)
+static int FileArchive_FillCache(FileArchiveDriver* driver, FileArchiveHandle* handle, const FileArchiveEntry* file, int minFill)
 {
-	unsigned int magic, version, entries;
-	unsigned short containers, flags;
-	const char* local = (const char*)header;
-
-	if (length < (sizeof(unsigned int) * 8))
-	{
-		STREAMER_PRINTF(("FileArchive: Header is too small\n"));
-		return -1;
-	}
-
-	memcpy(&magic, local + 0, sizeof(magic));
-	if (magic != FILEARCHIVE_HEADER_SIGNATURE)
-	{
-		STREAMER_PRINTF(("FileArchive: Header magic mismatches\n"));
-		return -1;
-	}
-
-	memcpy(&version, local + 4, sizeof(version));
-	if (version != 1)
-	{
-		STREAMER_PRINTF(("FileArchive: Header version not valid\n"));
-		return -1;
-	}
-
-	memcpy(&entries, local + 8, sizeof(entries));
-	memcpy(&containers, local + 12, sizeof(containers));
-	memcpy(&flags, local + 14, sizeof(flags));
-
-#if defined(_IOP)
-	driver->m_dynamic = AllocSysMemory(ALLOC_FIRST, sizeof(FileArchiveContainer) * containers + sizeof(FileArchiveEntry) * entries, 0);
-#else
-	driver->m_dynamic = malloc(sizeof(FileArchiveContainer) * containers + sizeof(FileArchiveEntry) * entries);
-#endif
-	if (!driver->m_dynamic)
-	{
-		STREAMER_PRINTF(("FileArchive: Failed allocating dynamic memory\n"));
-		return -1;
-	}
-
-	driver->m_currContainer = (FileArchiveContainer*)driver->m_dynamic;
-	driver->m_containersLeft = containers;
-
-	driver->m_currEntry = (FileArchiveEntry*)(driver->m_dynamic + sizeof(FileArchiveContainer) * containers);
-	driver->m_entriesLeft = entries;
-
-	return entries;
-}
-
-int FileArchive_ParseEntry(FileArchiveDriver* driver, const void* entry, int length)
-{
-	int nameSize, actualSize;
-	const char* local = entry;
-	const char* nameBegin, *nameEnd;
-	FileArchiveContainer* curr = &(driver->m_root);
-	FileArchiveEntry* result;
-
-	memcpy(&nameSize, local + 0, sizeof(nameSize));
-	actualSize = (sizeof(unsigned int) * 8 + sizeof(char) * 16 + nameSize + 15) & ~15;
-
-	if (length < actualSize)
-	{
-		STREAMER_PRINTF(("FileArchive: Out of data when parsing entry\n"));
-		return -1;
-	}
-
-	nameBegin = local + sizeof(unsigned int) * 8 + sizeof(char) * 16;
-	nameEnd = nameBegin + nameSize;
-
-	do
-	{
-		const char* nameCurr = nameBegin;
-		FileArchiveContainer* actual;
-
-		while ((nameCurr != nameEnd) && (*nameCurr != '/'))
-		{
-			++nameCurr;
-		}
-
-		if (nameCurr == nameEnd)
-		{
-			break;
-		}
-
-		actual = FileArchive_FindContainer(curr, nameBegin, nameCurr);
-		if (!actual)
-		{
-			if (driver->m_containersLeft-- <= 0)
-			{
-				STREAMER_PRINTF(("FileArchive: Ran out of containers while parsing entry\n"));
-				return -1;
-			}
-
-			actual = driver->m_currContainer++;
-			memset(actual, 0, sizeof(FileArchiveContainer));
-
-			strncpy(actual->m_name, nameBegin, nameCurr - nameBegin);
-			actual->m_name[(nameCurr - nameBegin) >= sizeof(actual->m_name) ? sizeof(actual->m_name)-1 : (nameCurr - nameBegin)] = '\0';
-
-			actual->m_parent = curr;
-			actual->m_next = curr->m_children;
-			curr->m_children = actual;
-		}
-
-		curr = actual;
-
-		nameBegin = nameCurr + 1;
-	}
-	while (1);
-
-	if (nameBegin == nameEnd)
-	{
-		STREAMER_PRINTF(("FileArchive: Invalid filename while parsing entry\n"));
-		return -1;
-	}
-
-	if (driver->m_entriesLeft-- <= 0)
-	{
-		STREAMER_PRINTF(("FileArchive: Out of entries while parsing\n"));
-		return -1;
-	}
-
-	result = driver->m_currEntry++;
-	memset(result, 0, sizeof(FileArchiveEntry));
-
-	result->m_container = curr;
-	result->m_next = curr->m_files;
-	curr->m_files = result;
-
-	memcpy(&(result->m_compression), local + 4, sizeof(result->m_compression));
-	memcpy(&(result->m_offset), local + 8, sizeof(result->m_offset));
-	memcpy(&(result->m_originalSize), local + 12, sizeof(result->m_originalSize));
-	memcpy(&(result->m_compressedSize), local + 16, sizeof(result->m_compressedSize));
-	memcpy(&(result->m_blockSize), local + 20, sizeof(result->m_blockSize));
-	memcpy(&(result->m_maxCompressedBlock), local + 28, sizeof(result->m_maxCompressedBlock)); 
-
-	strncpy(result->m_name, nameBegin, nameEnd - nameBegin);
-	result->m_name[(nameEnd - nameBegin) >= sizeof(result->m_name) ? sizeof(result->m_name)-1 : (nameEnd - nameBegin)] = '\0';
-
-	return 0;
-}
-
-FileArchiveContainer* FileArchive_FindContainer(FileArchiveContainer* curr, const char* begin, const char* end)
-{
-	for (curr = curr->m_children; curr; curr = curr->m_next)
-	{
-		const char* a,* b;
-
-		if (strlen(curr->m_name) != (size_t)(end - begin))
-		{
-			continue;
-		}
-
-		for (a = curr->m_name, b = begin; (tolower(*a) == tolower(*b)) && (b != end); ++a, ++b);
-
-		if (b != end)
-		{
-			continue;
-		}
-
-		return curr;
-	}
-
-	return 0;
-}
-
-int FileArchive_FillCache(FileArchiveDriver* driver, FileArchiveHandle* handle, FileArchiveEntry* file, int minFill)
-{
-	int cacheFill = driver->m_cacheFill - driver->m_cacheOffset;
+	int cacheFill = driver->cache.fill - driver->cache.offset;
 	int cacheMax, fileMax, readMax, ret;
 
 	if (cacheFill >= minFill)
@@ -862,34 +679,35 @@ int FileArchive_FillCache(FileArchiveDriver* driver, FileArchiveHandle* handle, 
 	}
 
 	cacheMax = FILEARCHIVE_CACHE_SIZE - cacheFill;
-	fileMax = file->m_compressedSize - handle->m_compressedOffset - cacheFill;
+	fileMax = file->size.compressed - handle->offset.compressed - cacheFill;
 
 	readMax = cacheMax > fileMax ? fileMax : cacheMax;
 
-	ret = driver->m_native.m_driver->lseek(driver->m_native.m_driver, driver->m_native.m_fd, driver->m_base + file->m_offset + handle->m_compressedOffset + cacheFill, StreamerSeekMode_Set);
+	ret = driver->native.driver->lseek(driver->native.driver, driver->native.fd, driver->base + file->data + handle->offset.compressed + cacheFill, StreamerSeekMode_Set);
 	if (ret < 0)
 	{
-		STREAMER_PRINTF(("FileArchive: Failed seeking to %d in archive\n", driver->m_base + file->m_offset + handle->m_compressedOffset + cacheFill));
+		STREAMER_PRINTF(("FileArchive: Failed seeking to %d in archive\n", driver->base + file->data + handle->offset.compressed + cacheFill));
 		return -1;
 	}
 
-	memcpy(driver->m_cache, driver->m_cache + driver->m_cacheOffset, cacheFill);
+	memcpy(driver->cache.data, driver->cache.data + driver->cache.offset, cacheFill);
 
-	ret = driver->m_native.m_driver->read(driver->m_native.m_driver, driver->m_native.m_fd, driver->m_cache + cacheFill, readMax);
+	ret = driver->native.driver->read(driver->native.driver, driver->native.fd, driver->cache.data + cacheFill, readMax);
 	if (ret != readMax)
 	{
 		STREAMER_PRINTF(("FileArchive: Failed reading %d bytes from archive (ret: %d)\n", readMax, ret));
 		return -1;
 	}
 
-	driver->m_cacheOffset = 0;
-	driver->m_cacheFill = cacheFill + readMax;
+	driver->cache.offset = 0;
+	driver->cache.fill = cacheFill + readMax;
 
-	if ((int)driver->m_cacheFill < minFill)
+	if ((int)driver->cache.fill < minFill)
 	{
-		STREAMER_PRINTF(("FileArchive: Failed filling cache, wanted %d bytes but could only get %d bytes\n", minFill, driver->m_cacheFill));
+		STREAMER_PRINTF(("FileArchive: Failed filling cache, wanted %d bytes but could only get %d bytes\n", minFill, driver->cache.fill));
 		return -1;
 	}
 
-	return driver->m_cacheFill;
+	return driver->cache.fill;
 }
+

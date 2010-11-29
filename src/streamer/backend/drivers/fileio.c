@@ -61,19 +61,19 @@ IODriver* FileIo_Create(const char* root)
 #endif
 #endif
 
-	driver->m_interface.destroy = FileIo_Destroy;
-	driver->m_interface.open = FileIo_Open;
-	driver->m_interface.close = FileIo_Close;
-	driver->m_interface.read = FileIo_Read;
-	driver->m_interface.lseek = FileIo_LSeek;
+	driver->interface.destroy = FileIo_Destroy;
+	driver->interface.open = FileIo_Open;
+	driver->interface.close = FileIo_Close;
+	driver->interface.read = FileIo_Read;
+	driver->interface.lseek = FileIo_LSeek;
 
-	driver->m_interface.dopen = 0;
-	driver->m_interface.dclose = 0;
-	driver->m_interface.dread = 0;
+	driver->interface.dopen = 0;
+	driver->interface.dclose = 0;
+	driver->interface.dread = 0;
 
-	driver->m_interface.align = 0;
+	driver->interface.align = 0;
 
-	strcpy(driver->m_root,root); // TODO: overflow check
+	strcpy(driver->root,root); // TODO: overflow check
 
 #if defined(_WIN32)
 	for (i = 0; i < STREAMER_MAX_FILEHANDLES; ++i)
@@ -83,7 +83,7 @@ IODriver* FileIo_Create(const char* root)
 #endif
 
 	STREAMER_PRINTF(("FileIo: Driver created\n"));
-	return &(driver->m_interface);
+	return &(driver->interface);
 }
 
 void FileIo_Destroy(struct IODriver* driver)
@@ -110,7 +110,7 @@ int FileIo_Open(struct IODriver* driver, const char* filename, StreamerOpenMode 
 	// TODO: if we're reading from cdrom, we need to re-parse the filename
 
 	char buffer[256];
-	strcpy(buffer,local->m_root);
+	strcpy(buffer,local->root);
 	strcat(buffer,filename); // TODO: overflow check
 
 	STREAMER_PRINTF(("FileIo: open(\"%s\", %d)\n", filename, mode));

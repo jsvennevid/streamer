@@ -28,8 +28,8 @@ SOFTWARE.
 
 typedef struct FileIoDriver
 {
-	IODriver m_interface;
-	char m_root[256];
+	IODriver interface;
+	char root[256];
 } FileIoDriver;
 
 #if defined(__cplusplus)

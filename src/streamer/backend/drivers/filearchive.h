@@ -25,89 +25,56 @@ SOFTWARE.
 #define streamer_common_filearchive_h
 
 #include "driver.h"
+#include "../../filearchive.h"
 
 #define FILEARCHIVE_MAX_HANDLES 8
 
-typedef struct FileArchiveContainer FileArchiveContainer;
-typedef struct FileArchiveEntry FileArchiveEntry;
 typedef struct FileArchiveHandle FileArchiveHandle;
-
-struct FileArchiveContainer
-{
-	FileArchiveContainer* m_parent;
-	FileArchiveContainer* m_children;
-	FileArchiveContainer* m_next;
-
-	FileArchiveEntry* m_files;
-
-	char m_name[256];
-};
-
-struct FileArchiveEntry
-{
-	FileArchiveContainer* m_container;
-	FileArchiveEntry* m_next;
-
-	unsigned int m_compression;
-	unsigned int m_offset;
-	unsigned int m_originalSize;
-	unsigned int m_compressedSize;
-	unsigned int m_blockSize;
-	unsigned int m_maxCompressedBlock;
-
-	char m_name[256];
-};
+typedef struct FileArchiveDriver FileArchiveDriver;
 
 struct FileArchiveHandle
 {
-	FileArchiveEntry* m_file;
-	unsigned int m_offset;
-	unsigned int m_compressedOffset;
-
-	unsigned int m_bufferOffset;
-	unsigned int m_bufferFill;
-
-	unsigned char* m_buffer;
-};
-
-typedef struct FileArchiveDriver
-{
-	IODriver m_interface;
-
-	unsigned char* m_static;
-	unsigned char* m_dynamic;
-
-	FileArchiveContainer m_root;
-	FileArchiveHandle m_handles[FILEARCHIVE_MAX_HANDLES];
-
-	unsigned char* m_cache;
-	unsigned int m_cacheOffset;
-	unsigned int m_cacheFill;
-	int m_cacheOwner;
+	const FileArchiveEntry* file;
 
 	struct
 	{
-		IODriver* m_driver;
-		int m_fd;
-	} m_native;
+		uint32_t original;
+		uint32_t compressed;
+	} offset;
 
-	int m_base;
+	struct
+	{
+		uint32_t offset;
+		uint32_t fill;
+		uint8_t* data;
+	} buffer;
+};
 
-	FileArchiveContainer* m_currContainer;
-	int m_containersLeft;
+struct FileArchiveDriver
+{
+	IODriver interface;
 
-	FileArchiveEntry* m_currEntry;
-	int m_entriesLeft;
-} FileArchiveDriver;
+	FileArchiveHeader* toc;
+	uint32_t base;
 
-#define FILEARCHIVE_VERSION_1 (1)
-#define FILEARCHIVE_VERSION_CURRENT FILEARCHIVE_VERSION_1
+	struct
+	{
+		uint32_t offset;
+		uint32_t fill;
+		int32_t owner;
+		uint8_t* data;
+	} cache;
 
-#define FILEARCHIVE_MAGIC_COOKIE (('Z' << 24) | ('F' << 16) | ('A' << 8) | ('R'))
+	struct
+	{
+		IODriver* driver;
+		int fd;
+	} native;
+
+	FileArchiveHandle handles[FILEARCHIVE_MAX_HANDLES];
+};
 
 IODriver* FileArchive_Create(IODriver* native, const char* file);
-
-#define STREAMER_FILEARCHIVE_SUPPORT_FASTLZ
 
 #endif
 
