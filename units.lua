@@ -70,7 +70,7 @@ StaticLibrary
 		Libs = {
 			{ "pthread"; Config = "linux-*-*-*" },
 			{ "pthread"; Config = "macosx-*-*-*" },
-		}
+		},
 	},
 
 	Env = {
@@ -173,7 +173,7 @@ Program
 		CPPPATH = "src"
 	},
 
-	Depends = { "streamer" }
+	Depends = { "streamer", "contrib.fastlz" }
 }
 
 Program
@@ -188,7 +188,7 @@ Program
 		CPPPATH = "src"
 	},
 
-	Depends = { "streamer" }
+	Depends = { "streamer", "contrib.fastlz" }
 }
 
 Default "streamer"
