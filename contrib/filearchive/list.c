@@ -6,17 +6,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#pragma warning(disable: 4127)
+#endif
+
 static char* buildContainerName(const FileArchiveContainer* container, const void* toc, unsigned int extraSize)
 {
 	const char* name = container->name != FILEARCHIVE_INVALID_OFFSET ? ((const char*)toc) + container->name : "";
-	int len = strlen(name);
+	int len = strlen(name), blen;
 	char* buf;
 
 	if (container->parent != FILEARCHIVE_INVALID_OFFSET)
 	{
 		buf = buildContainerName((const FileArchiveContainer*)(((const char*)toc) + container->parent), toc, extraSize + len + 1);
+		blen = strlen(buf);
 
-		sprintf(buf, "%s%s/", buf, name);
+		memcpy(buf + blen, name, len);
+		buf[blen + len] = '/';
+		buf[blen + len + 1] = '\0';
 		return buf;
 	}
 
@@ -28,7 +35,7 @@ static char* buildContainerName(const FileArchiveContainer* container, const voi
 
 static int decompressStream(FILE* inp, void* out, size_t compressedSize, size_t originalSize, uint32_t compression, uint32_t blockSize)
 {
-	char* buffer = malloc(blockSize) + sizeof(FileArchiveCompressedBlock);
+	char* buffer = malloc(blockSize + sizeof(FileArchiveCompressedBlock));
 	size_t bufferUse = 0;
 	size_t curr, used;
 
@@ -100,71 +107,90 @@ static int listArchive(const char* path)
 	FileArchiveHeader* header = NULL;
 	char* toc = NULL;
 
+	size_t compressedTotal = 0;
+	size_t uncompressedTotal = 0;
+
 	do
 	{
+#if defined(_WIN32)
+		if (fopen_s(&inp, path, "rb") != 0)
+#else
 		if ((inp = fopen(path, "rb")) == NULL)
+#endif
 		{
-			fprintf(stderr, "dir: Failed to open archive \"%s\"\n", path);
+			fprintf(stderr, "list: Failed to open archive \"%s\"\n", path);
 			break;
 		}
 
-		if (fseek(inp, -sizeof(FileArchiveFooter), SEEK_END) < 0)
+		if (fseek(inp, -((int)sizeof(FileArchiveFooter)), SEEK_END) < 0)
 		{
-			fprintf(stderr, "dir: Could not seek to end of file\n");
+			fprintf(stderr, "list: Could not seek to end of file\n");
 			break;
 		}
 
 		if (fread(&footer, 1, sizeof(footer), inp) != sizeof(footer))
 		{
-			fprintf(stderr, "dir: Failed to read footer\n");
+			fprintf(stderr, "list: Failed to read footer\n");
 			break;
 		}
 
 		if (footer.cookie != FILEARCHIVE_MAGIC_COOKIE)
 		{
-			fprintf(stderr, "dir: Mismatching cookie\n");
+			fprintf(stderr, "list: Mismatching cookie\n");
 			break;
 		}
 
 		toc = malloc(footer.size.original);
 		if (toc == NULL)
 		{
-			fprintf(stderr, "dir: Failed allocating TOC (%u bytes)\n", footer.size.original);
+			fprintf(stderr, "list: Failed allocating TOC (%u bytes)\n", footer.size.original);
 			break;
 		}
 
-		if (fseek(inp, -(sizeof(FileArchiveFooter) + footer.toc), SEEK_END) < 0)
+		if (fseek(inp, -((int)(sizeof(FileArchiveFooter) + footer.toc)), SEEK_END) < 0)
 		{
-			fprintf(stderr, "dir: Could not seek to TOC\n");
+			fprintf(stderr, "list: Could not seek to TOC\n");
 			break;
 		}
 
 		if (decompressStream(inp, toc, footer.size.compressed, footer.size.original, footer.compression, FILEARCHIVE_COMPRESSION_BLOCK_SIZE) < 0)
 		{
-			fprintf(stderr, "dir: Failed to load TOC\n");
+			fprintf(stderr, "list: Failed to load TOC\n");
 			break;
 		}
 
 		header = (FileArchiveHeader*)toc;
 		if (header->cookie != FILEARCHIVE_MAGIC_COOKIE)
 		{
-			fprintf(stderr, "dir: Header cookie mismatch\n");
+			fprintf(stderr, "list: Header cookie mismatch\n");
 			break;
 		}
 
 		if (header->version > FILEARCHIVE_VERSION_CURRENT)
 		{
-			fprintf(stderr, "dir: Unsupported version %u (maximum supported: %u)\n", (unsigned int)header->version, (unsigned int)FILEARCHIVE_VERSION_CURRENT);
+			fprintf(stderr, "list: Unsupported version %u (maximum supported: %u)\n", (unsigned int)header->version, (unsigned int)FILEARCHIVE_VERSION_CURRENT);
 			break;
 		}
 
 		if (header->size != footer.size.original)
 		{
-			fprintf(stderr, "dir: Header size mismatch from footer block (%u != %u)\n", (unsigned int)header->size, (unsigned int)footer.size.original);
+			fprintf(stderr, "list: Header size mismatch from footer block (%u != %u)\n", (unsigned int)header->size, (unsigned int)footer.size.original);
 			break;
 		}
 
-		fprintf(stderr, "File archive version %u, %u containers and %u files in TOC\n", header->version, header->containerCount, header->fileCount);
+		fprintf(stdout, "File archive version %u:\n", header->version);
+		for (i = 0; i < header->fileCount; ++i)
+		{
+			const FileArchiveEntry* file = ((const FileArchiveEntry*)(toc + header->files)) + i;
+
+			compressedTotal += file->size.compressed;
+			uncompressedTotal += file->size.original;
+		}
+
+		fprintf(stdout, "   Containers: %u Files: %u\n", header->containerCount, header->fileCount);
+		fprintf(stdout, "   Data: %u bytes, %u uncompressed (%.2f%% ratio)\n", compressedTotal, uncompressedTotal, (1.0-(((float)compressedTotal) / ((float)uncompressedTotal))) * 100.0f);
+		fprintf(stdout, "   TOC: %u bytes, %u uncompressed (%.2f%% ratio)\n", footer.size.compressed, footer.size.original, (1.0f-(((float)footer.size.compressed) / ((float)footer.size.original))) * 100.0f);
+		fprintf(stdout, "   Footer: %u bytes\n", sizeof(footer));
 
 		for (i = 0; i < header->containerCount; ++i)
 		{
@@ -174,14 +200,14 @@ static int listArchive(const char* path)
 
 			name = buildContainerName(container, toc, 0);
 
-			fprintf(stderr, "%s: (%u files)\n", name, (unsigned int)container->count);
+			fprintf(stdout, "%s\n", name);
 
 			for (j = 0; j < container->count; ++j)
 			{
 				const FileArchiveEntry* file = ((const FileArchiveEntry*)(toc + container->files)) + j;
 				const char* name = toc + file->name;
 
-				fprintf(stderr, "   %s (%u bytes, %.2f%% ratio)\n", name, file->size.original, (1.0f-(((float)file->size.compressed) / ((float)file->size.original))) * 100.0f);
+				fprintf(stdout, "   %s (%u bytes, %.2f%% ratio)\n", name, file->size.original, (1.0f-(((float)file->size.compressed) / ((float)file->size.original))) * 100.0f);
 			}
 
 			free(name);

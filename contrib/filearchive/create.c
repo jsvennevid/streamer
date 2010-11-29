@@ -3,7 +3,7 @@
 #include <fastlz/fastlz.h>
 
 #if defined(_WIN32)
-#pragma warning(disable: 4127 4996)
+#pragma warning(disable: 4100 4127 4996)
 #include <windows.h>
 #endif
 
@@ -203,7 +203,7 @@ static int addFile(struct FileList* files, const char* path, const char* interna
 		{
 			*curr = '/';
 		}
-		*curr = tolower(*curr);
+		*curr = (char)tolower(*curr);
 	}
 #endif
 
@@ -261,7 +261,7 @@ static uint32_t compressStream(FILE* outp, uint32_t compression, void* inbuf, ui
 					}
 
 					result = fastlz_compress_level(2, inbuf, size, outbuf);
-					if (result >= size)
+					if (result >= (int)size)
 					{
 						result = -1;
 					}	
@@ -270,15 +270,15 @@ static uint32_t compressStream(FILE* outp, uint32_t compression, void* inbuf, ui
 
 			if (result >= 0)
 			{
-				block.original = size;
-				block.compressed = result;
+				block.original = (uint16_t)size;
+				block.compressed = (uint16_t)result;
 
 				if (fwrite(&block, 1, sizeof(block), outp) != sizeof(block))
 				{
 					return COMPRESS_RESULT_ERROR;
 				}
 
-				if (fwrite(outbuf, 1, result, outp) != result)
+				if (fwrite(outbuf, 1, result, outp) != ((size_t)result))
 				{
 					return COMPRESS_RESULT_ERROR;
 				}
@@ -287,15 +287,15 @@ static uint32_t compressStream(FILE* outp, uint32_t compression, void* inbuf, ui
 			}
 			else
 			{
-				block.original = size;
-				block.compressed = size | FILEARCHIVE_COMPRESSION_SIZE_IGNORE;
+				block.original = (uint16_t)size;
+				block.compressed = (uint16_t)(size | FILEARCHIVE_COMPRESSION_SIZE_IGNORE);
 
 				if (fwrite(&block, 1, sizeof(block), outp) != sizeof(block))
 				{
 					return COMPRESS_RESULT_ERROR;
 				}
 
-				if (fwrite(inbuf, 1, size, outp) != size)
+				if (fwrite(inbuf, 1, size, outp) != (size_t)size)
 				{
 					return COMPRESS_RESULT_ERROR;
 				}
@@ -665,7 +665,7 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 				file->compression = source->compression;
 				file->size.original = source->size.original;
 				file->size.compressed = source->size.compressed;
-				file->blockSize = source->blockSize;
+				file->blockSize = (uint16_t)source->blockSize;
 
 				if (stringCapacity < (stringSize + nlen))
 				{
@@ -920,15 +920,18 @@ int commandCreate(int argc, char* argv[])
 
 		fprintf(stderr, "Archive \"%s\" created successfully. Statistics: \n", archive);
 		fprintf(stderr, "   Containers: %u Files: %u\n", context.containerCount, context.fileCount);
-		fprintf(stderr, "   Data block: %u bytes, %u bytes uncompressed (ratio: %.2f%%)\n", context.data.size.compressed, context.data.size.original, (1.0f-((float)context.data.size.compressed / (float)context.data.size.original)) * 100.0f);
-		fprintf(stderr, "   Header block: %u bytes, %u bytes uncompressed (ratio: %.2f%%)\n", context.header.size.compressed, context.header.size.original, (1.0f-((float)context.header.size.compressed / (float)context.header.size.original)) * 100.0f);
-		fprintf(stderr, "   Footer block: %u bytes\n", context.footer.size.original);
+		fprintf(stderr, "   Data: %u bytes, %u bytes uncompressed (ratio: %.2f%%)\n", context.data.size.compressed, context.data.size.original, (1.0f-((float)context.data.size.compressed / (float)context.data.size.original)) * 100.0f);
+		fprintf(stderr, "   TOC: %u bytes, %u bytes uncompressed (ratio: %.2f%%)\n", context.header.size.compressed, context.header.size.original, (1.0f-((float)context.header.size.compressed / (float)context.header.size.original)) * 100.0f);
+		fprintf(stderr, "   Footer: %u bytes\n", context.footer.size.original);
 
 		result = 0;
 	}
 	while (0);
 
-	fclose(archp);
+	if (archp != NULL)
+	{
+		fclose(archp);
+	}
 	freeFiles(&files);
 
 	return result;
