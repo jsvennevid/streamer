@@ -1,2 +1,9 @@
-- file-archive format is currently not endian-safe
+
+API:
+	- Documentation needs to be written
+	- There is currently no method to write data to an open file
+
+FileArchive:
+	- File format is currently not endian-safe
+	- Opening through a content currently uses a brute-force search
 
