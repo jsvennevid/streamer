@@ -45,8 +45,8 @@ static int FileArchive_Close(struct IODriver* driver, int fd);
 static int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int length);
 static int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, StreamerSeekMode whence);
 
-static int FileArchive_LoadHeader(FileArchiveDriver* driver);
-static int FileArchive_LocateHeader(FileArchiveDriver* driver);
+static int FileArchive_LoadTOC(FileArchiveDriver* driver);
+static uint32_t FileArchive_LocateFooter(FileArchiveDriver* driver);
 
 static int FileArchive_FillCache(FileArchiveDriver* driver, FileArchiveHandle* handle, const FileArchiveEntry* file, int minFill);
 
@@ -92,7 +92,7 @@ IODriver* FileArchive_Create(IODriver* native, const char* file)
 	}
 	driver->cache.data = buffer;
 
-	if (FileArchive_LoadHeader(driver) < 0)
+	if (FileArchive_LoadTOC(driver) < 0)
 	{
 		STREAMER_PRINTF(("FileArchive: Could not load header\n"));
 		FileArchive_Destroy(&(driver->interface));
@@ -504,168 +504,229 @@ static int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, Stream
 	return handle->offset.original;
 }
 
-static int FileArchive_LoadHeader(FileArchiveDriver* driver)
+static int FileArchive_LoadTOC(FileArchiveDriver* driver)
 {
-	STREAMER_PRINTF(("FileArchive: Loading header not re-implemented\n"));
-	return -1;
-/*
-	int location, ret, size, entries;
-	const unsigned char* curr;
+	uint32_t tail = FILEARCHIVE_INVALID_OFFSET;
+	FileArchiveFooter footer;
+	int ret;
 
-	location = FileArchive_LocateHeader(driver);
-	if (location < 0)
+	tail = FileArchive_LocateFooter(driver);
+	if (tail == FILEARCHIVE_INVALID_OFFSET)
 	{
-		STREAMER_PRINTF(("FileArchive: Failed locating header for archive\n"));
+		STREAMER_PRINTF(("FileArchive: Failed to locate footer for archive\n"));
 		return -1;
 	}
 
-	driver->m_base = location;
-
-	ret = driver->m_native.m_driver->lseek(driver->m_native.m_driver, driver->m_native.m_fd, location, StreamerSeekMode_Set);
+	ret = driver->native.driver->lseek(driver->native.driver, driver->native.fd, tail, StreamerSeekMode_Set);
 	if (ret < 0)
-	{
-		STREAMER_PRINTF(("FileArchive: Failed seekign to header\n"));
-		return -1;
-	}
-
-	size = driver->m_native.m_driver->read(driver->m_native.m_driver, driver->m_native.m_fd, driver->m_cache, FILEARCHIVE_CACHE_SIZE);
-	if (size < 0)
-	{
-		STREAMER_PRINTF(("FileArchive: Failed reading header\n"));
-		return -1;
-	}
-
-	entries = FileArchive_ParseHeader(driver, driver->m_cache, size);
-	if (entries < 0)
-	{
-		STREAMER_PRINTF(("FileArchive: Failed parsing header\n"));
-		return -1;
-	}
-
-	curr = (driver->m_cache + sizeof(unsigned int) * 8);
-	size -= sizeof(unsigned int) * 8;
-
-	while (entries-- > 0)
-	{
-		int nameSize, actualSize, ret;
-
-		if (size < sizeof(unsigned int)*12)
-		{
-			int extra;
-			memcpy(driver->m_cache, curr, size);
-
-			extra = driver->m_native.m_driver->read(driver->m_native.m_driver, driver->m_native.m_fd, driver->m_cache + size, FILEARCHIVE_CACHE_SIZE - size);
-			if (extra < 0)
-			{
-				STREAMER_PRINTF(("FileArchive: Failed re-filling while parsing file entries\n"));
-				return -1;
-			}
-
-			size += extra;
-			curr = driver->m_cache;
-
-			if (size < sizeof(unsigned int)*12)
-			{
-				STREAMER_PRINTF(("FileArchive: Entry too short when re-filling\n"));
-				return -1;
-			}
-		}
-
-		memcpy(&nameSize, curr, sizeof(nameSize));
-		actualSize = (sizeof(unsigned int) * 8 + sizeof(char) * 16 + nameSize + 15) & ~15;
-
-		if (actualSize > size)
-		{
-			int extra;
-			memcpy(driver->m_cache, curr, size);
-
-			extra = driver->m_native.m_driver->read(driver->m_native.m_driver, driver->m_native.m_fd, driver->m_cache + size, FILEARCHIVE_CACHE_SIZE - size);
-			if (extra < 0)
-			{
-				STREAMER_PRINTF(("FileArchive: Failed re-filling while parsing file entries\n"));
-				return -1;
-			}
-
-			size += extra;
-			curr = driver->m_cache;
-
-			if (size < actualSize)
-			{
-				STREAMER_PRINTF(("FileArchive: Entry too short when re-filling (had %d, expected %d bytes)\n", size, actualSize));
-				return -1;
-			}
-		}
-
-		ret = FileArchive_ParseEntry(driver, curr, size);
-		if (ret < 0)
-		{
-			STREAMER_PRINTF(("FileArchive: Could not parse file entry\n"));
-			return -1;
-		}
-
-		curr += actualSize;
-		size -= actualSize;
-	}
-
-	return 0;
-*/
-}
-
-static int FileArchive_LocateHeader(FileArchiveDriver* driver)
-{
-	STREAMER_PRINTF(("FileArchive: LocateHeader not re-implemented\n"));
-	return -1;
-/*
-	int eof, target, offset, ret, location;
-
-	eof = driver->m_native.m_driver->lseek(driver->m_native.m_driver, driver->m_native.m_fd, 0, StreamerSeekMode_End);
-	if (eof < 0)
-	{
-		STREAMER_PRINTF(("FileArchive: Failed seeking to end of file\n"));
-		return -1;
-	}
-
-	target = eof > FILEARCHIVE_CACHE_SIZE ? eof - FILEARCHIVE_CACHE_SIZE : 0;
-
-	offset = driver->m_native.m_driver->lseek(driver->m_native.m_driver, driver->m_native.m_fd, target, StreamerSeekMode_Set);
-	if (offset != target)
 	{
 		STREAMER_PRINTF(("FileArchive: Failed seeking to tail\n"));
 		return -1;
 	}
 
-	ret = driver->m_native.m_driver->read(driver->m_native.m_driver, driver->m_native.m_fd, driver->m_cache, eof - target);
+	ret = driver->native.driver->read(driver->native.driver, driver->native.fd, &footer, sizeof(footer));
+	if (ret != sizeof(footer))
+	{
+		STREAMER_PRINTF(("FileArchive: Failed reading tail\n"));
+		return -1;
+	}
+
+	if (footer.cookie != FILEARCHIVE_MAGIC_COOKIE)
+	{
+		STREAMER_PRINTF(("FileArchive: Mismatching magic cookie\n"));
+		return -1;
+	}
+
+	if ((footer.toc >= tail) || (footer.data >= tail))
+	{
+		STREAMER_PRINTF(("FileArchive: Invalid data location\n"));
+		return -1;
+	}
+
+	if (footer.size.original > (tail - footer.toc))
+	{
+		STREAMER_PRINTF(("FileArchive: Invalid TOC size\n"));
+	}
+
+	ret = driver->native.driver->lseek(driver->native.driver, driver->native.fd, tail - footer.toc, StreamerSeekMode_Set);
+	if (ret < 0)
+	{
+		STREAMER_PRINTF(("FileArchive: Could not seek to TOC\n"));
+		return -1;
+	}
+
+#if defined(_IOP)
+	driver->toc = AllocSysMemory(ALLOC_FIRST, footer.size.original, 0);
+#else
+	driver->toc = malloc(footer.size.original);
+#endif
+	if (!driver->toc)
+	{
+		STREAMER_PRINTF(("FileArchive: Failed to allocate memory for TOC\n"));
+		return -1;
+	}
+
+	if (footer.compression == FILEARCHIVE_COMPRESSION_NONE)
+	{
+		ret = driver->native.driver->read(driver->native.driver, driver->native.fd, driver->toc, footer.size.original);
+		if ((uint32_t)ret != footer.size.original)
+		{
+			STREAMER_PRINTF(("FileArchive: Failed to read TOC\n"));
+			return -1;
+		}
+	}
+	else
+	{
+		uint32_t length = footer.size.compressed;
+		uint32_t offset = 0, cacheUsage = 0;
+
+		switch (footer.compression)
+		{
+			case FILEARCHIVE_COMPRESSION_NONE: case FILEARCHIVE_COMPRESSION_FASTLZ: break;
+			default:
+			{
+				STREAMER_PRINTF(("FileArchive: Unsupported compression scheme used for TOC\n"));
+				return -1;
+			}
+			break;
+		}
+
+		while ((offset != footer.size.original) && (length > 0))
+		{
+			size_t maxRead = (FILEARCHIVE_CACHE_SIZE - cacheUsage) > length ? length : (FILEARCHIVE_CACHE_SIZE - cacheUsage);
+			uint8_t* begin;
+			uint8_t* end;
+
+			ret = driver->native.driver->read(driver->native.driver, driver->native.fd, driver->cache.data + cacheUsage, maxRead);
+			if ((uint32_t)ret != maxRead)
+			{
+				STREAMER_PRINTF(("FileArchive: Short read while reading TOC block\n"));
+				return -1;
+			}
+
+			begin = driver->cache.data;
+			end = begin + maxRead + cacheUsage;
+
+			while (begin != end)
+			{
+				FileArchiveCompressedBlock block;
+
+				if ((end - begin) < sizeof(FileArchiveCompressedBlock))
+				{
+					break;
+				}
+
+				memcpy(&block, begin, sizeof(FileArchiveCompressedBlock));
+
+				if (block.compressed & FILEARCHIVE_COMPRESSION_SIZE_IGNORE)
+				{
+					if ((block.compressed & FILEARCHIVE_COMPRESSION_SIZE_MASK) != block.original)
+					{
+						STREAMER_PRINTF(("FileArchive: Invalid compressed TOC block\n"));
+						return -1;
+					}
+
+					if (block.original > ((end - begin) - sizeof(FileArchiveCompressedBlock)))
+					{
+						break;
+					}
+
+					memcpy(((uint8_t*)driver->toc) + offset, begin + sizeof(FileArchiveCompressedBlock), block.original);
+				}
+				else
+				{
+					if (block.compressed > ((end - begin) - sizeof(FileArchiveCompressedBlock)))
+					{
+						break;
+					}
+
+					switch (footer.compression)
+					{
+						case FILEARCHIVE_COMPRESSION_FASTLZ:
+						{
+							ret = fastlz_decompress(begin + sizeof(FileArchiveCompressedBlock), block.compressed, ((uint8_t*)driver->toc) + offset, FILEARCHIVE_BUFFER_SIZE > (footer.size.original - offset) ? (footer.size.original - offset) : FILEARCHIVE_BUFFER_SIZE);
+							if (ret != block.original)
+							{
+								STREAMER_PRINTF(("FileArchive: Failed to decompress TOC block\n"));
+								return -1;
+							}
+						}
+						break;
+					}
+				}
+
+				offset += block.original;
+				begin += sizeof(FileArchiveCompressedBlock) + (block.compressed & FILEARCHIVE_COMPRESSION_SIZE_MASK);
+			}
+
+			memcpy(driver->cache.data, begin, end-begin);
+			cacheUsage = end-begin;
+
+			length -= maxRead;
+		}
+
+		if ((offset != footer.size.original) || (length > 0))
+		{
+			STREAMER_PRINTF(("FileArchive: Failed to read compressed TOC\n"));
+			return -1;
+		}
+	}
+
+	driver->base = tail - footer.data;
+	return 0;
+}
+
+static uint32_t FileArchive_LocateFooter(FileArchiveDriver* driver)
+{
+	int eof, target, offset, ret, location;
+
+	eof = driver->native.driver->lseek(driver->native.driver, driver->native.fd, 0, StreamerSeekMode_End);
+	if (eof < 0)
+	{
+		STREAMER_PRINTF(("FileArchive: Failed seeking to end of file\n"));
+		return FILEARCHIVE_INVALID_OFFSET;
+	}
+
+	target = eof > FILEARCHIVE_CACHE_SIZE ? eof - FILEARCHIVE_CACHE_SIZE : 0;
+
+	offset = driver->native.driver->lseek(driver->native.driver, driver->native.fd, target, StreamerSeekMode_Set);
+	if (offset != target)
+	{
+		STREAMER_PRINTF(("FileArchive: Failed seeking to tail of file\n"));
+		return FILEARCHIVE_INVALID_OFFSET;
+	}
+
+	ret = driver->native.driver->read(driver->native.driver, driver->native.fd, driver->cache.data, eof - target);
 	if (ret != (eof - target))
 	{
 		STREAMER_PRINTF(("FileArchive: Failed reading buffer for tail\n"));
-		return -1;
+		return FILEARCHIVE_INVALID_OFFSET;
 	}
 
 	location = -1;
 	for (offset = (eof - target) - 4; offset >= 0; --offset)
 	{
 		unsigned int magic;
-		memcpy(&magic, driver->m_cache + offset, sizeof(magic)); 
+		memcpy(&magic, driver->cache.data + offset, sizeof(magic)); 
 
-		if ((magic != FILEARCHIVE_TAIL_SIGNATURE) || (offset < 4))
+		if ((magic != FILEARCHIVE_MAGIC_COOKIE) || (offset < 4))
 		{
 			continue;
 		}
 
-		memcpy(&location, driver->m_cache + offset - 4, sizeof(location));
+		memcpy(&location, driver->cache.data + offset - 4, sizeof(location));
 		break;
 	}
 
 	if (location < 0 || (location > eof))
 	{
 		STREAMER_PRINTF(("FileArchive: Failed locating tail\n"));
-		return -1;
+		return FILEARCHIVE_INVALID_OFFSET;
 	}
 
 	location = eof - ((eof - target) - (offset - 4)) - location;
 
 	return location;
-*/
 }
 
 static int FileArchive_FillCache(FileArchiveDriver* driver, FileArchiveHandle* handle, const FileArchiveEntry* file, int minFill)
