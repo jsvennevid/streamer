@@ -1,4 +1,4 @@
-#include <streamer/filearchive.h>
+#include <streamer/backend/filearchive.h>
 #include <fastlz/fastlz.h>
 
 #include <stdio.h>

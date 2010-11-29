@@ -24,7 +24,7 @@ SOFTWARE.
 #ifndef streamer_common_streamer_h
 #define streamer_common_streamer_h
 
-#include "backend/drivers/io.h"
+#include "io.h"
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4505)

@@ -25,7 +25,7 @@ SOFTWARE.
 #define streamer_common_filearchive_h
 
 #include "driver.h"
-#include "../../filearchive.h"
+#include "../filearchive.h"
 
 #define FILEARCHIVE_MAX_HANDLES 8
 

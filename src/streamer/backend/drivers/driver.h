@@ -24,7 +24,7 @@ SOFTWARE.
 #ifndef streamer_common_driver_h
 #define streamer_common_driver_h
 
-#include "io.h"
+#include "../../io.h"
 
 typedef struct IODriver
 {
