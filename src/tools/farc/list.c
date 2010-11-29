@@ -187,9 +187,9 @@ static int listArchive(const char* path)
 		}
 
 		fprintf(stdout, "   Containers: %u Files: %u\n", header->containerCount, header->fileCount);
-		fprintf(stdout, "   Data: %u bytes, %u uncompressed (%.2f%% ratio)\n", compressedTotal, uncompressedTotal, (1.0-(((float)compressedTotal) / ((float)uncompressedTotal))) * 100.0f);
-		fprintf(stdout, "   TOC: %u bytes, %u uncompressed (%.2f%% ratio)\n", footer.size.compressed, footer.size.original, (1.0f-(((float)footer.size.compressed) / ((float)footer.size.original))) * 100.0f);
-		fprintf(stdout, "   Footer: %u bytes\n", sizeof(footer));
+		fprintf(stdout, "   Data: %u bytes, %u uncompressed (%.2f%% ratio)\n", (unsigned int)compressedTotal, (unsigned int)uncompressedTotal, (1.0-(((float)compressedTotal) / ((float)uncompressedTotal))) * 100.0f);
+		fprintf(stdout, "   TOC: %u bytes, %u uncompressed (%.2f%% ratio)\n", (unsigned int)footer.size.compressed, (unsigned int)footer.size.original, (1.0f-(((float)footer.size.compressed) / ((float)footer.size.original))) * 100.0f);
+		fprintf(stdout, "   Footer: %u bytes\n", (unsigned int)sizeof(footer));
 
 		for (i = 0; i < header->containerCount; ++i)
 		{
