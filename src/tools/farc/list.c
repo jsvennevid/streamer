@@ -204,7 +204,7 @@ static int listArchive(const char* path)
 			for (j = 0; j < container->count; ++j)
 			{
 				const FileArchiveEntry* file = ((const FileArchiveEntry*)(toc + container->files)) + j;
-				const FileArchiveHash* hash = ((const FileArchiveHash*)(toc + header->hashes));// + (file - ((const FileArchiveEntry*)(toc + header->files)));
+				const FileArchiveHash* hash = ((const FileArchiveHash*)(toc + header->hashes)) + (file - ((const FileArchiveEntry*)(toc + header->files)));
 				char hashbuf[sizeof(hash->data) * 2 + 1];
 				char* name = toc + file->name;
 				unsigned int k;
