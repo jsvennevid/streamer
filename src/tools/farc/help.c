@@ -7,21 +7,21 @@ void commandHelp(char* command)
 
 	if (command == NULL)
 	{
-		fprintf(stderr, "filearchive <command> ...\n");
-		fprintf(stderr, "command = create, help,list\n\n");
+		fprintf(stderr, "farc <command> ...\n");
+		fprintf(stderr, "command = create, help, list\n\n");
 		return;
 	}
 	else if (!strcmp("help", command))
 	{
 		fprintf(stderr, "Help is available for the following commands:\n\n");
-		fprintf(stderr, "\tcreate\n");
-		fprintf(stderr, "\tlist\n");
+		fprintf(stderr, "\tcreate (short: c)\n");
+		fprintf(stderr, "\tlist (short: l)\n");
 		fprintf(stderr, "\n");
 		return;
 	}
-	else if (!strcmp("create", command))
+	else if (!strcmp("create", command) || !strcmp("c", command))
 	{
-		fprintf(stderr, "filearchive create [<options>] <archive> [@<spec>] [<path> ...]\n\n");
+		fprintf(stderr, "farc crecte|c [<options>] <archive> [@<spec>] [<path> ...]\n\n");
 		fprintf(stderr, "Create a new file archive.\n\n");
 		fprintf(stderr, "Options are:\n");
 		fprintf(stderr, "\t-z <compression>   Select compression method: fastlz none (default: none) (global/spec)\n");
@@ -35,9 +35,9 @@ void commandHelp(char* command)
 		fprintf(stderr, "\n");
 		return;
 	}
-	else if (!strcmp("list", command))
+	else if (!strcmp("list", command) || !strcmp("l", command))
 	{
-		fprintf(stderr, "filearchive list <archive> ...\n\n");
+		fprintf(stderr, "farc list|l <archive> ...\n\n");
 		fprintf(stderr, "List contents of one or more archives.\n\n");
 		return;
 	}

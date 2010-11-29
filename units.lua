@@ -53,7 +53,7 @@ StaticLibrary
 	Sources = {
 		{
 			MGlob {
-				Dir = "src",
+				Dir = "src/streamer",
 				Extensions = { ".c" },
 				Filters = {
 					{ Pattern = "/win32/", Configs = { "win32-*-*-*" } },
@@ -75,7 +75,7 @@ StaticLibrary
 
 	Env = {
 		CPPPATH = {
-			"contrib"
+			"src/contrib"
 		},
 	},
 
@@ -96,7 +96,7 @@ SharedLibrary
 
 	Sources = {
 		FGlob {
-			Dir = "src/backend",
+			Dir = "src/streamer/backend",
 			Extensions = { ".c" },
 			Filters = {
 				{ Pattern = "/iop/"; Config = "ps2-*-*-*" }
@@ -104,13 +104,13 @@ SharedLibrary
 		},
 
 		Glob {
-			Dir = "contrib/fastlz", Extensions = { ".c" }
+			Dir = "src/contrib/fastlz", Extensions = { ".c" }
 		}
 	},
 
 	Env = {
 		CPPPATH = {
-			"contrib"
+			"src/contrib"
 		}
 	},
 
@@ -125,14 +125,14 @@ SharedLibrary
 
 Program
 {
-	Name = "filearchive",
+	Name = "farc",
 
 	Sources = {
-		Glob { Dir = "contrib/filearchive", Extensions = { ".c" } }
+		Glob { Dir = "src/tools/farc", Extensions = { ".c" } }
 	},
 
 	Env = {
-		CPPPATH = "contrib"
+		CPPPATH = { "src", "src/contrib" }
 	},
 
 	Depends = {
@@ -146,7 +146,7 @@ StaticLibrary
 	SubConfig = "iop",
 
 	Sources = {
-		Glob { Dir = "contrib/fastlz", Extensions = { ".c" } }
+		Glob { Dir = "src/contrib/fastlz", Extensions = { ".c" } }
 	},
 
 	Env = {
@@ -166,7 +166,7 @@ Program
 	Name = "simple",
 
 	Sources = {
-		Glob { Dir = "samples/simple", Extensions = { ".c" } }
+		Glob { Dir = "src/samples/simple", Extensions = { ".c" } }
 	},
 
 	Env = {
