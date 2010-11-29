@@ -1,7 +1,7 @@
 #include <streamer/streamer.h>
 #include <stdio.h>
 
-#include "md5.h"
+#include <sha1/sha1.h>
 
 #if defined(STREAMER_WIN32)
 #include <windows.h>
@@ -39,7 +39,7 @@ int main(int argc, char* argv[])
 	{
 		fprintf(stderr, "\nStreamer hash sample - hash file on disk or in a file archive\n\n");
 		fprintf(stderr, "Usage: hash [<archive>:]<file>\n\n");
-		fprintf(stderr, "Outputs MD5 sum of specified file identical to the one from md5sum\n\n");
+		fprintf(stderr, "Outputs SHA-1 sum of specified file identical to the one from sha1sum\n\n");
 		return 0;
 	}
 
@@ -69,9 +69,8 @@ int main(int argc, char* argv[])
 	do
 	{
 		char buf[1024];
-		int totalRead = 0;
-		md5_state_t state;
-		md5_byte_t digest[16];
+		int totalRead = 0, i;
+		SHA1Context state;
 
 		fd = streamerOpen(filename, StreamerOpenMode_Read);
 		if (fd < 0)
@@ -87,7 +86,7 @@ int main(int argc, char* argv[])
 			break;
 		}
 
-		md5_init(&state);
+		SHA1Reset(&state);
 
 		do
 		{
@@ -107,7 +106,7 @@ int main(int argc, char* argv[])
 				break;
 			}
 
-			md5_append(&state, (const md5_byte_t*)buf, ret);
+			SHA1Input(&state, (const unsigned char*)buf, ret);
 		}
 		while (ret > 0);
 
@@ -116,14 +115,13 @@ int main(int argc, char* argv[])
 			break;
 		}
 
-		md5_finish(&state, digest);
+		SHA1Result(&state);
 
-		fprintf(stdout, "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x %s\n",
-			digest[0], digest[1], digest[2], digest[3],
-			digest[4], digest[5], digest[6], digest[7],
-			digest[8], digest[9], digest[10], digest[11],
-			digest[12], digest[13], digest[14], digest[15],
-			filename);
+		for (i = 0; i < 20; ++i)
+		{
+			fprintf(stdout, "%02x", (state.Message_Digest[i / 4] >> ((3-(i & 3)) * 8)) & 0xff);
+		}
+		fprintf(stdout, " %s\n", filename);
 
 		ret = streamerClose(fd);
 		if (ret < 0)

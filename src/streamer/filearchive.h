@@ -8,6 +8,7 @@ typedef struct FileArchiveEntry FileArchiveEntry;
 typedef struct FileArchiveCompressedBlock FileArchiveCompressedBlock;
 typedef struct FileArchiveHeader FileArchiveHeader;
 typedef struct FileArchiveFooter FileArchiveFooter;
+typedef struct FileArchiveHash FileArchiveHash;
 
 struct FileArchiveContainer
 {
@@ -57,6 +58,7 @@ struct FileArchiveHeader
 
 	uint32_t files;			// Offset to list of files
 	uint32_t fileCount;		// Number of files in archive
+	uint32_t hashes;		// Offset to file hashes
 };
 
 struct FileArchiveFooter
@@ -72,6 +74,11 @@ struct FileArchiveFooter
 		uint32_t original;	// TOC size, uncompressed
 		uint32_t compressed;	// TOC size, compressed
 	} size;
+};
+
+struct FileArchiveHash
+{
+	uint8_t data[20];
 };
 
 #define FILEARCHIVE_VERSION_1 (1)

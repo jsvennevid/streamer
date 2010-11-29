@@ -45,6 +45,9 @@ static int FileArchive_Close(struct IODriver* driver, int fd);
 static int FileArchive_Read(struct IODriver* driver, int fd, void* buffer, unsigned int length);
 static int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, StreamerSeekMode whence);
 
+static const FileArchiveEntry* FileArchive_FindByName(FileArchiveDriver* driver, const char* filename);
+static const FileArchiveEntry* FileArchive_FindByHash(FileArchiveDriver* driver, const FileArchiveHash* hash);
+
 static int FileArchive_LoadTOC(FileArchiveDriver* driver);
 static uint32_t FileArchive_LocateFooter(FileArchiveDriver* driver);
 
@@ -125,11 +128,9 @@ static void FileArchive_Destroy(struct IODriver* driver)
 
 static int FileArchive_Open(struct IODriver* driver, const char* filename, StreamerOpenMode mode)
 {
-	const char* begin, * end;
 	FileArchiveDriver* local = (FileArchiveDriver*)driver;
-	const FileArchiveContainer* container;
 	const FileArchiveEntry* entry;
-	int i,n;
+	int i;
 
 	STREAMER_PRINTF(("FileArchive: open(\"%s\", %d)\n", filename, mode));
 
@@ -145,76 +146,51 @@ static int FileArchive_Open(struct IODriver* driver, const char* filename, Strea
 		return -1;
 	}
 
-	begin = filename;
-	end = filename + strlen(filename);
-
-	container = (const FileArchiveContainer*)(((const char*)local->toc) + local->toc->containers);
-	do
+	if (*filename == '@')
 	{
-		uint32_t offset;
-		const char* curr = begin;
-		while ((curr != end) && (*curr != '/'))
+		FileArchiveHash hash;
+		const char* begin = filename + 1;
+
+		memset(&hash, 0, sizeof(hash));
+		for (i = 0; (i < sizeof(hash.data) * 2) && *begin; ++i, ++begin)
 		{
-			++curr;
-		}
+			uint8_t value;
 
-		if (curr == end)
-		{
-			break;
-		}
-
-		for (offset = container->children; offset != FILEARCHIVE_INVALID_OFFSET; offset = container->next)		
-		{
-			const char* name;
-
-			container = (const FileArchiveContainer*)(((const char*)local->toc) + offset);
-			name = container->name != FILEARCHIVE_INVALID_OFFSET ? ((const char*)local->toc) + container->name : "";
-
-			if (strlen(name) != (size_t)(curr-begin))
+			if ((*begin >= '0') && (*begin <= '9'))
 			{
-				continue;
+				value = *begin - '0';
 			}
-
-			if (!memcmp(name, begin, (curr-begin)))
+			else if ((*begin >= 'A') && (*begin <= 'F'))
+			{
+				value = 10 + (*begin - 'A');
+			}
+			else if ((*begin >= 'a') && (*begin <= 'f'))
+			{
+				value = 10 + (*begin - 'a');
+			}
+			else
 			{
 				break;
 			}
+
+			hash.data[i >> 1] |= (value << (((i & 1)^1) * 4));
 		}
 
-		if (offset == FILEARCHIVE_INVALID_OFFSET)
+		if (i != sizeof(hash.data) * 2)
 		{
-			STREAMER_PRINTF(("FileArchive: Could not locate container for '%s'\n", filename));
+			STREAMER_PRINTF(("FileArchive: Invalid hash length (%d != %d)\n", i, (int)sizeof(hash.data) * 2));
 			return -1;
 		}
 
-		begin = curr + 1;
+		entry = FileArchive_FindByHash(local, &hash);
 	}
-	while (1);
-
-	if (begin == end)
+	else
 	{
-		STREAMER_PRINTF(("FileArchive: Invalid filename when opening '%s'\n", filename));
-		return -1;
+		entry = FileArchive_FindByName(local, filename);
 	}
 
-	entry = (const FileArchiveEntry*)(((const char*)local->toc) + container->files);
-	for (i = 0, n = container->count; i < n; ++i, ++entry)
+	if (entry == NULL)
 	{
-		const char* name = entry->name != FILEARCHIVE_INVALID_OFFSET ? ((const char*)local->toc) + entry->name : "";
-		if (strlen(name) != (size_t)(end - begin))
-		{
-			continue;
-		}
-
-		if (!memcmp(name, begin, end-begin))
-		{
-			break;
-		}
-	}
-
-	if (i == n)
-	{
-		STREAMER_PRINTF(("FileArchive: Could not find file '%s'\n", filename));
 		return -1;
 	}
 
@@ -502,6 +478,115 @@ static int FileArchive_LSeek(struct IODriver* driver, int fd, int offset, Stream
 	}
 
 	return handle->offset.original;
+}
+
+static const FileArchiveEntry* FileArchive_FindByName(FileArchiveDriver* driver, const char* filename)
+{
+	const FileArchiveContainer* container;
+	const FileArchiveEntry* entry;
+	const char* begin = filename;
+	const char* end = begin + strlen(filename);
+	unsigned int i, n;
+
+	container = (const FileArchiveContainer*)(((const char*)driver->toc) + driver->toc->containers);
+	do
+	{
+		uint32_t offset;
+		const char* curr = begin;
+		while ((curr != end) && (*curr != '/'))
+		{
+			++curr;
+		}
+
+		if (curr == end)
+		{
+			break;
+		}
+
+		for (offset = container->children; offset != FILEARCHIVE_INVALID_OFFSET; offset = container->next)		
+		{
+			const char* name;
+
+			container = (const FileArchiveContainer*)(((const char*)driver->toc) + offset);
+			name = container->name != FILEARCHIVE_INVALID_OFFSET ? ((const char*)driver->toc) + container->name : "";
+
+			if (strlen(name) != (size_t)(curr-begin))
+			{
+				continue;
+			}
+
+			if (!memcmp(name, begin, (curr-begin)))
+			{
+				break;
+			}
+		}
+
+		if (offset == FILEARCHIVE_INVALID_OFFSET)
+		{
+			STREAMER_PRINTF(("FileArchive: Could not locate container for '%s'\n", filename));
+			return NULL;
+		}
+
+		begin = curr + 1;
+	}
+	while (1);
+
+	if (begin == end)
+	{
+		STREAMER_PRINTF(("FileArchive: Invalid filename when opening '%s'\n", filename));
+		return NULL;
+	}
+
+	entry = (const FileArchiveEntry*)(((const char*)driver->toc) + container->files);
+	for (i = 0, n = container->count; i < n; ++i, ++entry)
+	{
+		const char* name = entry->name != FILEARCHIVE_INVALID_OFFSET ? ((const char*)driver->toc) + entry->name : "";
+		if (strlen(name) != (size_t)(end - begin))
+		{
+			continue;
+		}
+
+		if (!memcmp(name, begin, end-begin))
+		{
+			break;
+		}
+	}
+
+	if (i == n)
+	{
+		STREAMER_PRINTF(("FileArchive: Could not find file '%s'\n", filename));
+		return NULL;
+	}
+
+	return entry;
+}
+
+static const FileArchiveEntry* FileArchive_FindByHash(FileArchiveDriver* driver, const FileArchiveHash* hash)
+{
+	const FileArchiveHash* begin = (const FileArchiveHash*)(((const uint8_t*)(driver->toc)) + driver->toc->hashes);
+	const FileArchiveHash* end = begin + driver->toc->fileCount;
+	const FileArchiveEntry* files = (const FileArchiveEntry*)(((const uint8_t*)(driver->toc)) + driver->toc->files);
+	const FileArchiveHash* curr = begin;
+
+	fprintf(stderr, "%08x %08x %08x\n", driver->toc, begin, end);
+
+	for (; begin < end; ++begin)
+	{
+		if (!memcmp(hash, begin, sizeof(FileArchiveHash)))
+		{
+			break;
+		}
+
+		fprintf(stderr, "NO on %u\n", end - begin);
+	}
+
+	if (begin == end)
+	{
+		STREAMER_PRINTF(("FileArchive: Could not find hash\n"));
+		return NULL;
+	}
+
+	return files + (curr - begin);
 }
 
 static int FileArchive_LoadTOC(FileArchiveDriver* driver)

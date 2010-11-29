@@ -1,6 +1,8 @@
 #include <streamer/filearchive.h>
 #include <fastlz/fastlz.h>
 
+#include <sha1/sha1.h>
+
 #if defined(_WIN32)
 #pragma warning(disable: 4100 4127 4996)
 #include <windows.h>
@@ -46,6 +48,8 @@ struct FileEntry
 	uint32_t container;
 
 	uint32_t blockSize;
+
+	FileArchiveHash hash;
 };
 
 struct FileList
@@ -346,12 +350,15 @@ struct FileCompressData
 {
 	FILE* inp;
 	uint32_t totalRead;
+
+	SHA1Context state;
 };
 
 static uint32_t fileCompressCallback(void* buffer, uint32_t maxLength, void* userData)
 {
 	struct FileCompressData* data = (struct FileCompressData*)userData;
 	int result = fread(buffer, 1, maxLength, data->inp);
+	SHA1Input(&(data->state), buffer, result);
 	data->totalRead += result;
 	return result;
 }
@@ -371,6 +378,7 @@ static uint32_t writeFiles(FILE* outp, struct FileList* files, uint32_t offset, 
 		struct FileEntry* entry = &(files->files[i]);
 		struct FileCompressData data;
 		size_t totalRead = 0, totalWritten = 0;
+		unsigned int j,k;
 
 		inp = fopen(entry->path, "rb");
 		if (inp == NULL)
@@ -393,6 +401,7 @@ static uint32_t writeFiles(FILE* outp, struct FileList* files, uint32_t offset, 
 
 		data.inp = inp;
 		data.totalRead = 0;
+		SHA1Reset(&(data.state));
 
 		totalWritten = compressData(outp, entry->compression, fileCompressCallback, &data, FILEARCHIVE_COMPRESSION_BLOCK_SIZE);
 		if (totalWritten == COMPRESS_RESULT_ERROR)
@@ -406,6 +415,15 @@ static uint32_t writeFiles(FILE* outp, struct FileList* files, uint32_t offset, 
 		entry->size.original = totalRead;
 		entry->size.compressed = totalWritten;
 		entry->blockSize = FILEARCHIVE_COMPRESSION_BLOCK_SIZE;
+		SHA1Result(&(data.state));
+		for (j = 0; j < 5; ++j)
+		{
+			for (k = 0; k < 4; ++k)
+			{
+				uint8_t value = (uint8_t)((data.state.Message_Digest[j] >> ((3-k) * 8)) & 0xff);
+				entry->hash.data[j * 4 + k] = value;
+			}
+		}
 		offset += totalWritten;
 
 		dataRead += totalRead;
@@ -482,7 +500,7 @@ struct HeaderCompressData
 	{
 		const char* begin;
 		const char* end;
-	} blocks[4]; // header, containers, files, strings
+	} blocks[5]; // header, containers, files, hashes, strings
 
 	uint32_t totalRead;
 };
@@ -493,7 +511,7 @@ uint32_t headerCompressCallback(void* buffer, uint32_t maxLength, void* userData
 	unsigned int i;
 	size_t written = 0;
 
-	for (i = 0; i < 4; ++i)
+	for (i = 0; i < 5; ++i)
 	{
 		size_t size = data->blocks[i].end - data->blocks[i].begin;
 		size_t blockSize = maxLength < size ? maxLength : size;
@@ -524,6 +542,8 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 
 	FileArchiveHeader header;
 	struct HeaderCompressData data;
+
+	FileArchiveHash* hashes = NULL;
 
 	uint32_t result = 0;
 
@@ -615,6 +635,7 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 		/* construct files */
 
 		fileEntries = malloc(sizeof(FileArchiveEntry) * files->count);
+		hashes = malloc(sizeof(FileArchiveHash) * files->count);
 		memset(fileEntries, 0, sizeof(FileArchiveEntry) * files->count);
 
 		for (i = 0; i < files->count; ++i)
@@ -648,6 +669,7 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 				FileArchiveEntry* file = &(fileEntries[fileCount]);
 				uint32_t fileOffset = ((char*)file - (char*)fileEntries);
 				size_t nlen = strlen(source->filePart) + 1;
+				FileArchiveHash* hash = hashes + fileCount;
 
 				if (source->container != containerOffset)
 				{
@@ -676,6 +698,8 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 				memcpy(stringBuffer + stringSize, source->filePart, nlen);
 				stringSize += nlen;
 
+				*hash = source->hash;
+
 				++ fileCount;
 			}
 		}
@@ -698,19 +722,19 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 			container->next = relocateOffset(container->children, sizeof(FileArchiveHeader));
 
 			container->files = relocateOffset(container->files, sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer));
-			container->name = relocateOffset(container->name, sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer) + fileCount * sizeof(FileArchiveEntry));
+			container->name = relocateOffset(container->name, sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer) + fileCount * sizeof(FileArchiveEntry) + fileCount * sizeof(FileArchiveHash));
 		}
 
 		for (i = 0; i < fileCount; ++i)
 		{
 			FileArchiveEntry* file = &(fileEntries[i]);
 
-			file->name = relocateOffset(file->name, sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer) + fileCount * sizeof(FileArchiveEntry));
+			file->name = relocateOffset(file->name, sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer) + fileCount * sizeof(FileArchiveEntry) + fileCount * sizeof(FileArchiveHash));
 		}
 
 		header.cookie = FILEARCHIVE_MAGIC_COOKIE;
 		header.version = FILEARCHIVE_VERSION_CURRENT;
-		header.size = sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer) + fileCount * sizeof(FileArchiveEntry) + stringSize;
+		header.size = sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer) + fileCount * sizeof(FileArchiveEntry) + fileCount * sizeof(FileArchiveHash) + stringSize;
 		header.flags = 0;
 
 		header.containers = sizeof(FileArchiveHeader);
@@ -718,6 +742,7 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 
 		header.files = sizeof(FileArchiveHeader) + containerCount * sizeof(FileArchiveContainer);
 		header.fileCount = fileCount;
+		header.hashes = header.files + fileCount * sizeof(FileArchiveEntry);
 
 		data.blocks[0].begin = (const void*)&header;
 		data.blocks[0].end = (const void*)(&header + 1);
@@ -728,8 +753,11 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 		data.blocks[2].begin = (const void*)fileEntries;
 		data.blocks[2].end = (const void*)(fileEntries + fileCount);
 
-		data.blocks[3].begin = (const void*)stringBuffer;
-		data.blocks[3].end = (const void*)(stringBuffer + stringSize);
+		data.blocks[3].begin = (const void*)hashes;
+		data.blocks[3].end = (const void*)(hashes + fileCount);
+
+		data.blocks[4].begin = (const void*)stringBuffer;
+		data.blocks[4].end = (const void*)(stringBuffer + stringSize);
 
 		result = compressData(outp, context->compression, headerCompressCallback, &data, FILEARCHIVE_COMPRESSION_BLOCK_SIZE); 
 		if (result == COMPRESS_RESULT_ERROR)
@@ -750,6 +778,7 @@ static uint32_t writeHeader(FILE* outp, struct FileList* files, uint32_t offset,
 
 	free(fileEntries);
 	free(containerEntries);
+	free(hashes);
 	free(stringBuffer);
 
 	return offset;

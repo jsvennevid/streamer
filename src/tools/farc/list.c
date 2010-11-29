@@ -204,9 +204,22 @@ static int listArchive(const char* path)
 			for (j = 0; j < container->count; ++j)
 			{
 				const FileArchiveEntry* file = ((const FileArchiveEntry*)(toc + container->files)) + j;
-				const char* name = toc + file->name;
+				const FileArchiveHash* hash = ((const FileArchiveHash*)(toc + header->hashes));// + (file - ((const FileArchiveEntry*)(toc + header->files)));
+				char hashbuf[sizeof(hash->data) * 2 + 1];
+				char* name = toc + file->name;
+				unsigned int k;
 
-				fprintf(stdout, "   %s (%u bytes, %.2f%% ratio)\n", name, file->size.original, (1.0f-(((float)file->size.compressed) / ((float)file->size.original))) * 100.0f);
+				hashbuf[0] = '\0';
+				for (k = 0; k < sizeof(hash->data); ++k)
+				{
+#if defined(_WIN32)
+					sprintf_s(hashbuf, sizeof(hashbuf), "%s%02x", hashbuf, hash->data[k]);
+#else
+					sprintf(hashbuf, "%s%02x", hashbuf, hash->data[k]);
+#endif
+				}
+
+				fprintf(stdout, "   %s (%u bytes, %.2f%% ratio) - SHA-1: %s\n", name, file->size.original, (1.0f-(((float)file->size.compressed) / ((float)file->size.original))) * 100.0f, hashbuf);
 			}
 
 			free(name);

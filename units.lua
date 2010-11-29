@@ -136,7 +136,7 @@ Program
 	},
 
 	Depends = {
-		"contrib.fastlz"
+		"contrib.fastlz", "contrib.sha1"
 	}
 }
 
@@ -154,6 +154,15 @@ StaticLibrary
 			{ "/wd4244"; Config = "win32-*-*-*" },
 			{ "/wd4244"; Config = "win64-*-*-*" }
 		}
+	},
+}
+
+StaticLibrary
+{
+	Name = "contrib.sha1",
+
+	Sources = {
+		Glob { Dir = "src/contrib/sha1", Extensions = { ".c" } }
 	},
 }
 
@@ -185,10 +194,10 @@ Program
 	},
 
 	Env = {
-		CPPPATH = "src"
+		CPPPATH = { "src", "src/contrib" }
 	},
 
-	Depends = { "streamer", "contrib.fastlz" }
+	Depends = { "streamer", "contrib.fastlz", "contrib.sha1" }
 }
 
 Default "streamer"
