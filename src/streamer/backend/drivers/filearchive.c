@@ -94,7 +94,7 @@ IODriver* FileArchive_Create(IODriver* native, const char* file)
 
 	if (FileArchive_LoadTOC(driver) < 0)
 	{
-		STREAMER_PRINTF(("FileArchive: Could not load header\n"));
+		STREAMER_PRINTF(("FileArchive: Could not load TOC\n"));
 		FileArchive_Destroy(&(driver->interface));
 		return 0;
 	}
@@ -537,7 +537,7 @@ static int FileArchive_LoadTOC(FileArchiveDriver* driver)
 		return -1;
 	}
 
-	if ((footer.toc >= tail) || (footer.data >= tail))
+	if ((footer.toc > tail) || (footer.data > tail))
 	{
 		STREAMER_PRINTF(("FileArchive: Invalid data location\n"));
 		return -1;
@@ -706,7 +706,7 @@ static uint32_t FileArchive_LocateFooter(FileArchiveDriver* driver)
 	location = -1;
 	for (offset = (eof - target) - 4; offset >= 0; --offset)
 	{
-		unsigned int magic;
+		uint32_t magic;
 		memcpy(&magic, driver->cache.data + offset, sizeof(magic)); 
 
 		if ((magic != FILEARCHIVE_MAGIC_COOKIE) || (offset < 4))
@@ -714,17 +714,15 @@ static uint32_t FileArchive_LocateFooter(FileArchiveDriver* driver)
 			continue;
 		}
 
-		memcpy(&location, driver->cache.data + offset - 4, sizeof(location));
+		location = target + offset;
 		break;
 	}
 
-	if (location < 0 || (location > eof))
+	if (location < 0)
 	{
 		STREAMER_PRINTF(("FileArchive: Failed locating tail\n"));
 		return FILEARCHIVE_INVALID_OFFSET;
 	}
-
-	location = eof - ((eof - target) - (offset - 4)) - location;
 
 	return location;
 }
