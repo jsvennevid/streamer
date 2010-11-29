@@ -568,8 +568,6 @@ static const FileArchiveEntry* FileArchive_FindByHash(FileArchiveDriver* driver,
 	const FileArchiveEntry* files = (const FileArchiveEntry*)(((const uint8_t*)(driver->toc)) + driver->toc->files);
 	const FileArchiveHash* curr = begin;
 
-	fprintf(stderr, "%08x %08x %08x\n", driver->toc, begin, end);
-
 	for (; begin < end; ++begin)
 	{
 		if (!memcmp(hash, begin, sizeof(FileArchiveHash)))
@@ -577,7 +575,6 @@ static const FileArchiveEntry* FileArchive_FindByHash(FileArchiveDriver* driver,
 			break;
 		}
 
-		fprintf(stderr, "NO on %u\n", end - begin);
 	}
 
 	if (begin == end)
