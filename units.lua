@@ -163,10 +163,25 @@ StaticLibrary
 
 Program
 {
-	Name = "simple",
+	Name = "sample.simple",
 
 	Sources = {
 		Glob { Dir = "src/samples/simple", Extensions = { ".c" } }
+	},
+
+	Env = {
+		CPPPATH = "src"
+	},
+
+	Depends = { "streamer" }
+}
+
+Program
+{
+	Name = "sample.hash",
+
+	Sources = {
+		Glob { Dir = "src/samples/hash", Extensions = { ".c" } }
 	},
 
 	Env = {
