@@ -1,5 +1,29 @@
-#ifndef STREAMER_CONTRIB_FILEARCHIVE_H
-#define STREAMER_CONTRIB_FILEARCHIVE_H
+/*
+
+Copyright (c) 2010 Jesper Svennevid
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+*/
+
+#ifndef FILEARCHIVE_FILEARCHIVE_H 
+#define FILEARCHIVE_FILEARCHIVE_H
 
 #if defined(_IOP)
 typedef unsigned char uint8_t;
@@ -10,48 +34,76 @@ typedef int int32_t;
 #include <stdint.h>
 #endif
 
-typedef struct FileArchiveContainer FileArchiveContainer;
-typedef struct FileArchiveEntry FileArchiveEntry;
-typedef struct FileArchiveCompressedBlock FileArchiveCompressedBlock;
-typedef struct FileArchiveHeader FileArchiveHeader;
-typedef struct FileArchiveFooter FileArchiveFooter;
-typedef struct FileArchiveHash FileArchiveHash;
+typedef struct fa_container_t fa_container_t;
+typedef struct fa_entry_t fa_entry_t;
+typedef struct fa_block_t fa_block_t;
+typedef struct fa_header_t fa_header_t;
+typedef struct fa_footer_t fa_footer_t;
+typedef struct fa_hash_t fa_hash_t;
 
-struct FileArchiveContainer
+typedef uint32_t fa_offset_t;
+
+typedef enum
 {
-	uint32_t parent;	// Offset to parent container (FileArchiveContainer)
-	uint32_t children;	// Offset to child containers (FileArchiveContainer)
-	uint32_t next;		// Offset to next sibling container (FileArchiveContainer)
+	FA_COMPRESSION_NONE = (0),
+	FA_COMPRESSION_FASTLZ = (('F' << 24) | ('L' << 16) | ('Z' << 8) | ('0'))
+} fa_compression_t;
 
-	uint32_t files;		// Offset to first file in container (FileArchiveEntry)
-	uint32_t count;		// number of entries
+typedef enum
+{
+	FA_VERSION_1 = 1,
 
-	uint32_t name;		// Offset to container name
+	FA_VERSION_CURRENT = FA_VERSION_1
+} fa_version_t;
+
+typedef enum
+{
+	FA_MAGIC_COOKIE_HEADER = (('F' << 24)|('A' << 16)|('R' << 8)|('H')),
+	FA_MAGIC_COOKIE_FOOTER = (('F' << 24)|('A' << 16)|('R' << 8)|('F'))
+} fa_magic_cookie_t;
+
+struct fa_container_t
+{
+	fa_offset_t parent;		// Offset to parent container (Relative to start of TOC)
+	fa_offset_t children;		// Offset to child containers (Relative to start of TOC)
+	fa_offset_t next;		// Offset to next sibling container (Relative to start of TOC)
+
+	fa_offset_t name;		// Offset to container name (Relative to start of TOC)
+
+	struct
+	{
+		fa_offset_t offset;	// Offset to first entry in container (Relative to start of TOC)
+		uint32_t count;		// Number of entries in container
+	} entries;
 };
 
-struct FileArchiveEntry
+struct fa_entry_t
 {
-	uint32_t data;			// Offset to file data
-	uint32_t name;			// Offset to name
+	fa_offset_t data;		// Offset to file data (Relative to start of data)
+	fa_offset_t name;		// Offset to name (Relative to start of TOC)
 
 	uint32_t compression;		// Compression method used in file
+	uint32_t blockSize;		// Block size required when decompressing
 
 	struct
 	{
 		uint32_t original;	// original file size when uncompressed
 		uint32_t compressed;	// compressed file size in archive
 	} size;
-
-	uint16_t blockSize;		// block size required for decompression
 };
 
-struct FileArchiveCompressedBlock
+struct fa_block_t
 {
 	uint16_t original;
-	uint16_t compressed; 		// FILEARCHIVE_COMPRESSION_SIZE_IGNORE == block uncompressed
+	uint16_t compressed; 		// If the highest bit (FILEARCHIVE_COMPRESSION_SIZE_IGNORE) is set, the block is uncompressed
 };
 
-struct FileArchiveHeader
+struct fa_hash_t
+{
+	uint8_t data[20];
+};
+
+struct fa_header_t
 {
 	uint32_t cookie;		// Magic cookie
 	uint32_t version;		// Version of archive
@@ -60,48 +112,43 @@ struct FileArchiveHeader
 
 	// Version 1
 
-	uint32_t containers;		// Offset to containers (first container == root folder)
-	uint32_t containerCount;	// Number of containers in archive
-
-	uint32_t files;			// Offset to list of files
-	uint32_t fileCount;		// Number of files in archive
-	uint32_t hashes;		// Offset to file hashes
-};
-
-struct FileArchiveFooter
-{
-	uint32_t cookie;		// Magic cookie
-	uint32_t toc;			// Offset to TOC (relative to beginning of footer)
-	uint32_t data;			// Offset to data (relative to beginning of footer)
-
-	uint32_t compression;		// Compression used on header
+	struct
+	{
+		fa_offset_t offset;	// Offset to containers (relative to start of TOC)
+		uint32_t count;		// Number of containers in archive
+	} containers;
 
 	struct
 	{
+		fa_offset_t offset;	// Offset to entries (relative to start of TOC)
+		uint32_t count;		// Number of entries in archive
+	} entries;
+
+	fa_offset_t hashes;		// Offset to content hashes
+};
+
+struct fa_footer_t
+{
+	uint32_t cookie;		// Magic cookie
+
+	struct
+	{
+		uint32_t compression;	// TOC compression format
 		uint32_t original;	// TOC size, uncompressed
 		uint32_t compressed;	// TOC size, compressed
-	} size;
+		fa_hash_t hash;		// TOC hash
+	} toc;
+
+	struct
+	{
+		uint32_t original;	// Data size, uncompressed
+		uint32_t compressed;	// Data size, compressed
+	} data;
 };
 
-struct FileArchiveHash
-{
-	uint8_t data[20];
-};
+#define FA_COMPRESSION_SIZE_IGNORE (0x8000)
 
-#define FILEARCHIVE_VERSION_1 (1)
-#define FILEARCHIVE_VERSION_CURRENT	FILEARCHIVE_VERSION_1
-
-#define FILEARCHIVE_MAGIC_COOKIE (('F' << 24) | ('A' << 16) | ('R' << 8) | ('C'))
-
-#define FILEARCHIVE_COMPRESSION_NONE (0)
-#define FILEARCHIVE_COMPRESSION_FASTLZ (('F' << 24) | ('L' << 16) | ('Z' << 8) | ('0'))
-
-#define FILEARCHIVE_COMPRESSION_SIZE_IGNORE 0x8000
-#define FILEARCHIVE_COMPRESSION_SIZE_MASK 0x7fff
-
-#define FILEARCHIVE_COMPRESSION_BLOCK_SIZE (16384)
-
-#define FILEARCHIVE_INVALID_OFFSET (0xffffffff)
+#define FA_INVALID_OFFSET (0xffffffff)
 
 #endif
 

@@ -34,7 +34,7 @@ typedef struct FileArchiveDriver FileArchiveDriver;
 
 struct FileArchiveHandle
 {
-	const FileArchiveEntry* file;
+	const fa_entry_t* file;
 
 	struct
 	{
@@ -54,7 +54,7 @@ struct FileArchiveDriver
 {
 	IODriver interface;
 
-	FileArchiveHeader* toc;
+	fa_header_t* toc;
 	uint32_t base;
 
 	struct

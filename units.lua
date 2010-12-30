@@ -123,23 +123,6 @@ SharedLibrary
 -- Contrib --
 -------------
 
-Program
-{
-	Name = "farc",
-
-	Sources = {
-		Glob { Dir = "src/tools/farc", Extensions = { ".c" } }
-	},
-
-	Env = {
-		CPPPATH = { "src", "src/contrib" }
-	},
-
-	Depends = {
-		"contrib.fastlz", "contrib.sha1"
-	}
-}
-
 StaticLibrary
 {
 	Name = "contrib.fastlz",
@@ -154,15 +137,6 @@ StaticLibrary
 			{ "/wd4244"; Config = "win32-*-*-*" },
 			{ "/wd4244"; Config = "win64-*-*-*" }
 		}
-	},
-}
-
-StaticLibrary
-{
-	Name = "contrib.sha1",
-
-	Sources = {
-		Glob { Dir = "src/contrib/sha1", Extensions = { ".c" } }
 	},
 }
 
