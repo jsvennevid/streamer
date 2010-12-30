@@ -140,6 +140,15 @@ StaticLibrary
 	},
 }
 
+StaticLibrary
+{
+	Name = "contrib.sha1",
+
+	Sources = {
+		Glob { Dir = "src/contrib/sha1", Extensions = { ".c" } }
+	}
+}
+
 -------------
 -- Samples --
 -------------
