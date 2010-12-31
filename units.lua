@@ -44,7 +44,6 @@ local function MGlob(args)
         return result
 end
 
-local dependencies = { "contrib.fastlz" }
 StaticLibrary
 {
 	Name = "streamer",
@@ -56,11 +55,18 @@ StaticLibrary
 				Dir = "src/streamer",
 				Extensions = { ".c" },
 				Filters = {
-					{ Pattern = "/win32/", Configs = { "win32-*-*-*" } },
+					{ Pattern = "/win32/", Configs = { "win*-*-*-*" } },
 					{ Pattern = "/ee/", Configs = { "ps2-*-*-*" } },
 					{ Pattern = "/unix/", Configs = { "macosx-*-*-*", "linux-*-*-*" } },
 					{ Pattern = "/iop/", Configs = {"ps2-*-*-iop*" } },
-					{ Pattern = "/backend/", Configs = { "win32-*-*-*", "macosx-*-*-*", "linux-*-*-*" } }
+					{ Pattern = "/backend/", Configs = { "win*-*-*-*", "macosx-*-*-*", "linux-*-*-*" } }
+				}
+			},
+			MGlob {
+				Dir = "src/contrib/fastlz",
+				Extensions = { ".c" },
+				Filters = {
+					{ Pattern = "/", Configs = { "win*-*-*-*", "macosx-*-*-*", "linux-*-*-*" } } 
 				}
 			}
 		}
@@ -78,19 +84,12 @@ StaticLibrary
 			"src/contrib"
 		},
 	},
-
-	Depends = {
-		{ dependencies; Config = "linux-*-*-*" },
-		{ dependencies; Config = "macosx-*-*-*" },
-		{ dependencies; Config = "win32-*-*-*" },
-		{ dependencies; Config = "win64-*-*-*" }
-	}
 }
 
 -- PS2 IOP streaming IRX
 SharedLibrary
 {
-	Name = "iopstream",
+	Name = "iopstrmr",
 	SubConfig = "iop",
 	Config = "ps2-*-*-*",
 
@@ -111,31 +110,6 @@ SharedLibrary
 	Env = {
 		CPPPATH = {
 			"src/contrib"
-		}
-	},
-
-	Depends = {
-		"contrib.fastlz"
-	}
-}
-
--------------
--- Contrib --
--------------
-
-StaticLibrary
-{
-	Name = "contrib.fastlz",
-	SubConfig = "iop",
-
-	Sources = {
-		Glob { Dir = "src/contrib/fastlz", Extensions = { ".c" } }
-	},
-
-	Env = {
-		CCOPTS = {
-			{ "/wd4244"; Config = "win32-*-*-*" },
-			{ "/wd4244"; Config = "win64-*-*-*" }
 		}
 	},
 }
@@ -184,4 +158,4 @@ Program
 }
 
 Default "streamer"
-Default "iopstream"
+Default "iopstrmr"
